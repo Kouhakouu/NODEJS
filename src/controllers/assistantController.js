@@ -68,10 +68,29 @@ let postDeleteClassAssistantCRUD = async (req, res) => {
     }
 };
 
+let updateAssistant = async (req, res) => {
+    // Lấy id từ URL params, data từ body
+    let assistantId = req.params.id; // nếu bạn dùng /assistant-update-crud/:id
+    let data = req.body;
+
+    if (!assistantId) {
+        return res.status(400).json({ message: 'Assistant ID is required.' });
+    }
+
+    try {
+        let updatedAssistant = await CRUDservice.updateAssistantData(assistantId, data);
+        return res.status(200).json(updatedAssistant);
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ message: e.message || 'Error updating assistant.' });
+    }
+};
+
 
 module.exports = {
     getAssistantInfo: getAssistantInfo,
     postClassAssistantCRUD: postClassAssistantCRUD,
     postAssistantDeleteCRUD: postAssistantDeleteCRUD,
-    postDeleteClassAssistantCRUD: postDeleteClassAssistantCRUD
+    postDeleteClassAssistantCRUD: postDeleteClassAssistantCRUD,
+    updateAssistant: updateAssistant
 }

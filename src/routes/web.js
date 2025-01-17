@@ -34,11 +34,15 @@ let initWebRoutes = (app) => {
     router.post('/class-delete-crud', homeController.postClassDeleteCRUD)
     router.post('/class-assistant-post-crud', assistantController.postClassAssistantCRUD);
     router.post('/delete-class-assistant-crud', assistantController.postDeleteClassAssistantCRUD);
+    router.post('/assistant-delete-crud', assistantController.postAssistantDeleteCRUD);
+    router.put('/assistant-update-crud/:id', assistantController.updateAssistant);
 
     router.get('/get-schedules', scheduleController.getSchedules);
     router.post('/create-schedule', scheduleController.createSchedule);
     router.put('/edit-schedule/:id', scheduleController.editSchedule);
     router.delete('/delete-schedule/:id', scheduleController.deleteSchedule);
+    router.put('/teacher-update-crud/:id', teacherController.updateTeacher);
+    router.delete('/teacher-delete-crud/:id', teacherController.deleteTeacher);
 
     router.get('/get-student-info', studentController.getStudentInfo);
     router.post('/student-post-crud', studentController.postStudentCRUD);

@@ -28,6 +28,61 @@ let createNewTeacher = async (data) => {
     }
 };
 
+let updateTeacherData = async (teacherId, data) => {
+    const transaction = await db.sequelize.transaction();
+    try {
+        let teacher = await db.Teacher.findByPk(teacherId, { transaction });
+        if (!teacher) {
+            throw new Error('Teacher does not exist!');
+        }
+
+        // If password is provided, hash it
+        let updatedData = {
+            fullName: data.fullName,
+            email: data.email,
+            phoneNumber: data.phoneNumber,
+        };
+
+        if (data.password) {
+            let hashPassword = await bcrypt.hash(data.password, salt);
+            updatedData.password = hashPassword;
+        }
+
+        await teacher.update(updatedData, { transaction });
+
+        await transaction.commit();
+        return teacher;
+    } catch (e) {
+        await transaction.rollback();
+        throw e;
+    }
+};
+
+// New method to delete teacher
+let deleteTeacherData = async (teacherId) => {
+    const transaction = await db.sequelize.transaction();
+    try {
+        let teacher = await db.Teacher.findByPk(teacherId, { transaction });
+        if (!teacher) {
+            throw new Error('Teacher does not exist!');
+        }
+
+        // If there are associations (e.g., ClassTeacher), handle them accordingly
+        await db.ClassTeacher.destroy({
+            where: { teacher_id: teacherId },
+            transaction,
+        });
+
+        await teacher.destroy({ transaction });
+
+        await transaction.commit();
+        return;
+    } catch (e) {
+        await transaction.rollback();
+        throw e;
+    }
+};
+
 let createClass = async (data) => {
     const transaction = await db.sequelize.transaction();
     try {
@@ -373,6 +428,37 @@ let deleteClassAssistant = async (data) => {
     }
 };
 
+let updateAssistantData = async (assistantId, data) => {
+    const transaction = await db.sequelize.transaction();
+    try {
+        let assistant = await db.Assistant.findByPk(assistantId, { transaction });
+        if (!assistant) {
+            throw new Error('Assistant does not exist!');
+        }
+
+        // Nếu password được truyền lên, ta sẽ bcrypt nó
+        let updatedData = {
+            fullName: data.fullName,
+            email: data.email,
+            phoneNumber: data.phoneNumber,
+        };
+
+        if (data.password) {
+            let hashPassword = await bcrypt.hash(data.password, salt);
+            updatedData.password = hashPassword;
+        }
+
+        // Thực hiện update
+        await assistant.update(updatedData, { transaction });
+
+        await transaction.commit();
+        return assistant;
+    } catch (e) {
+        await transaction.rollback();
+        throw e;
+    }
+};
+
 let createNewStudent = async (data) => {
     try {
         // Ở đây không cần hash password vì Student không có trường password (trong ví dụ này),
@@ -556,9 +642,12 @@ module.exports = {
     createClassAssistant: createClassAssistant, // Thêm vào đây
     deleteAssistant: deleteAssistant,
     deleteClassAssistant: deleteClassAssistant,
+    updateAssistantData: updateAssistantData,
     createNewStudent: createNewStudent,
     updateStudent: updateStudent,
     createClassStudent: createClassStudent,
     deleteClassStudent: deleteClassStudent,
     deleteStudent: deleteStudent,
+    updateTeacherData: updateTeacherData,
+    deleteTeacherData: deleteTeacherData,
 };
