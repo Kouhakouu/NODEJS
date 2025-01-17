@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Cập Nhật Lớp Học</title>
+</head>
+
+<body>
+    <h1>Cập Nhật Lớp Học</h1>
+    <form action="/class-update-crud" method="POST">
+        <input type="hidden" name="id" value="<%= data.id %>" />
+        <div>
+            <label for="className">Tên Lớp:</label>
+            <input type="text" id="className" name="className" value="<%= data.className %>" />
+        </div>
+        <div>
+            <label for="gradeLevel">Cấp Học:</label>
+            <input type="number" id="gradeLevel" name="gradeLevel" value="<%= data.gradeLevel %>" />
+        </div>
+        <div>
+            <label for="classScheduleId">Lịch Học:</label>
+            <select id="classScheduleId" name="classScheduleId">
+                <% schedules.forEach(schedule=> { %>
+                    <option value="<%= schedule.id %>" <%=data.class_schedule_id===schedule.id ? 'selected' : '' %>
+                        >
+                        <%= schedule.study_day %> - <%= schedule.start_time %> đến <%= schedule.end_time %>
+                    </option>
+                    <% }) %>
+            </select>
+        </div>
+        <div>
+            <label for="teacherId">Giáo Viên:</label>
+            <select id="teacherId" name="teacherId">
+                <% teachers.forEach(teacher=> { %>
+                    <option value="<%= teacher.id %>" <%=data.classTeacher.teacher_id===teacher.id ? 'selected' : '' %>
+                        >
+                        <%= teacher.fullName %>
+                    </option>
+                    <% }) %>
+            </select>
+        </div>
+        <button type="submit">Cập Nhật</button>
+    </form>
+</body>
+
+</html>

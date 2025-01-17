@@ -1,12 +1,17 @@
 const { Sequelize } = require('sequelize');
+const config = require('./config.json'); // Adjust path if necessary
 
-const sequelize = new Sequelize('phongbui', 'root', null, {
-    host: 'localhost',
-    dialect: 'mysql',
-    logging: false
+const env = process.env.NODE_ENV || 'development';
+const dbConfig = config[env];
+
+const sequelize = new Sequelize(dbConfig.database, dbConfig.username, dbConfig.password, {
+    host: dbConfig.host,
+    dialect: dbConfig.dialect,
+    dialectOptions: dbConfig.dialectOptions,
+    logging: dbConfig.logging !== undefined ? dbConfig.logging : true
 });
 
-let connectDB = async () => {
+const connectDB = async () => {
     try {
         await sequelize.authenticate();
         console.log('Connection has been established successfully.');
@@ -15,4 +20,4 @@ let connectDB = async () => {
     }
 }
 
-module.exports = connectDB
+module.exports = connectDB;

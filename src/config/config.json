@@ -1,24 +1,47 @@
 {
   "development": {
     "username": "root",
-    "password": null,
+    "password": "14102004",
     "database": "phongbui",
-    "host": "127.0.0.1",
-    "dialect": "mysql"
+    "host": "localhost",
+    "dialect": "mssql",
+    "dialectOptions": {
+      "options": {
+        "encrypt": false,
+        "trustServerCertificate": true,
+        "port": 1433
+      }
+    },
+    "logging": false
   },
   "test": {
     "username": "root",
-    "password": null,
+    "password": "14102004",
     "database": "database_test",
-    "host": "127.0.0.1",
-    "dialect": "mysql",
+    "host": "localhost",
+    "dialect": "mssql",
+    "dialectOptions": {
+      "options": {
+        "encrypt": false,
+        "trustServerCertificate": true,
+        "port": 1433
+      }
+    },
     "logging": false
   },
   "production": {
     "username": "root",
-    "password": null,
+    "password": "14102004",
     "database": "database_production",
-    "host": "127.0.0.1",
-    "dialect": "mysql"
+    "host": "localhost",
+    "dialect": "mssql",
+    "dialectOptions": {
+      "options": {
+        "encrypt": false,
+        "trustServerCertificate": true,
+        "port": 1433
+      }
+    },
+    "logging": false
   }
 }
