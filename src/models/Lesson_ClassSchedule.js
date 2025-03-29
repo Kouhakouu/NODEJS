@@ -1,35 +1,37 @@
 'use strict';
 const { Model } = require('sequelize');
 module.exports = (sequelize, DataTypes) => {
-    class Student_Classes extends Model {
+    class LessonClassSchedules extends Model {
         static associate(models) {
-            // Định nghĩa liên kết nếu cần, 
+            // Định nghĩa associations nếu cần
         }
     }
-    Student_Classes.init({
-        studentId: {
+    LessonClassSchedules.init({
+        lessonId: {
             type: DataTypes.INTEGER,
+            primaryKey: true,
             allowNull: false,
             references: {
-                model: 'Students',
+                model: 'Lessons',
                 key: 'id'
             },
             onDelete: 'CASCADE'
         },
-        classId: {
+        classScheduleId: {
             type: DataTypes.INTEGER,
+            primaryKey: true,
             allowNull: false,
             references: {
-                model: 'Classes',
+                model: 'ClassSchedules', // model ClassSchedules cần được định nghĩa
                 key: 'id'
             },
             onDelete: 'CASCADE'
         }
     }, {
         sequelize,
-        modelName: 'Student_Classes',
-        tableName: 'Student_Classes',
-        timestamps: true,
+        modelName: 'LessonClassSchedules',
+        tableName: 'Lesson_ClassSchedules',
+        timestamps: false
     });
-    return Student_Classes;
+    return LessonClassSchedules;
 };

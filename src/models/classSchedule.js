@@ -6,8 +6,15 @@ module.exports = (sequelize, DataTypes) => {
          * Helper method for defining associations.
          */
         static associate(models) {
-            // Một lịch học có thể liên kết với nhiều lớp học
             ClassSchedule.hasMany(models.Class, { foreignKey: 'class_schedule_id', as: 'classes' });
+
+            ClassSchedule.belongsToMany(models.Lesson, {
+                through: models.LessonClassSchedules,
+                foreignKey: 'classScheduleId',
+                otherKey: 'lessonId',
+                as: 'lessons'
+            });
+
         }
     };
     ClassSchedule.init({

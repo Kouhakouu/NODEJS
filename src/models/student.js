@@ -12,6 +12,22 @@ module.exports = (sequelize, DataTypes) => {
                 otherKey: 'classId',
                 as: 'classes'
             });
+
+            // Quan hệ với Lesson qua join table LessonStudent
+            Student.belongsToMany(models.Lesson, {
+                through: models.LessonStudent,
+                foreignKey: 'studentId',
+                otherKey: 'lessonId',
+                as: 'lessons'
+            });
+            // Quan hệ với StudentPerformance qua join table StudentPerformanceStudent
+            Student.belongsToMany(models.StudentPerformance, {
+                through: models.StudentPerformanceStudent,
+                foreignKey: 'studentId',
+                otherKey: 'studentPerformanceId',
+                as: 'performances'
+            });
+
         }
     }
     Student.init({

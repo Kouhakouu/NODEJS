@@ -5,7 +5,7 @@ import CRUDservice from '../services/CRUDservice';
 let formatTime = (time) => {
     if (!time) return null;
     let date = new Date(time);
-    return date.toISOString().substr(11, 5); // Extract HH:mm from ISO format
+    return date.toISOString().substr(11, 5);
 };
 
 let getClassInfo = async (req, res) => {
@@ -32,9 +32,9 @@ let getClassInfo = async (req, res) => {
                 },
                 {
                     model: db.Assistant,
-                    as: 'assistants', // Alias defined in model Class
-                    attributes: ['id', 'fullName', 'email', 'phoneNumber'], // Attributes from Assistant table
-                    through: { attributes: [] } // Exclude attributes from the join table (Class_Assistant)
+                    as: 'assistants',
+                    attributes: ['id', 'fullName', 'email', 'phoneNumber'],
+                    through: { attributes: [] }
                 }
             ]
         });
@@ -69,7 +69,7 @@ let postClassCRUD = async (req, res) => {
     const data = req.body;
     try {
         let newClass = await CRUDservice.createClass(data);
-        return res.status(201).json(newClass); // Trả về đối tượng lớp mới tạo
+        return res.status(201).json(newClass);
     } catch (e) {
         console.error(e);
         return res.status(400).json({ message: e.message || 'Error creating class' });

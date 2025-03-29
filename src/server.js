@@ -1,27 +1,31 @@
 import express from "express";
-import cors from 'cors';
+import cors from "cors";
 import bodyParser from "body-parser";
 import viewEngine from "./config/viewEngine";
 import initWebRoutes from "./routes/web";
 import connectDB from "./config/connectDB";
 import dotenv from "dotenv";
+import authRoutes from "./routes/auth.js";
 
 dotenv.config();
 
 const app = express();
 
 app.use(cors({
-    origin: 'http://localhost:3000',
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    origin: "http://localhost:3000",
+    methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
 }));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-
 viewEngine(app);
+
+// Đăng ký route cho authentication trước khi các route khác nếu cần
+app.use("/auth", authRoutes);
+
 initWebRoutes(app);
-connectDB()
+connectDB();
 
 const port = process.env.PORT || 3000;
 

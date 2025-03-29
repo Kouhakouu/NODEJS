@@ -1,4 +1,3 @@
-// src/models/Class_Assistant.js
 
 'use strict';
 const { Model } = require('sequelize');
@@ -8,7 +7,7 @@ module.exports = (sequelize, DataTypes) => {
          * Helper method for defining associations.
          */
         static associate(models) {
-            // Không cần định nghĩa thêm các associations ở đây vì chúng đã được định nghĩa trong Assistant và Class
+            // Định nghĩa thêm nếu cần
         }
     }
     Class_Assistant.init({

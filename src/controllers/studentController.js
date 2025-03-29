@@ -7,9 +7,9 @@ let getStudentInfo = async (req, res) => {
             include: [
                 {
                     model: db.Class,
-                    as: 'classes', // Alias đã định nghĩa trong model Student
+                    as: 'classes',
                     attributes: ['id', 'className', 'gradeLevel'],
-                    through: { attributes: [] }, // Ẩn thông tin trung gian
+                    through: { attributes: [] },
                 },
             ],
         });
@@ -21,9 +21,8 @@ let getStudentInfo = async (req, res) => {
 };
 
 let postStudentCRUD = async (req, res) => {
-    // Tạo mới 1 học sinh (giả sử người dùng truyền vào body đầy đủ thông tin)
     try {
-        const data = req.body; // fullName, DOB, school, parentPhoneNumber, parentEmail
+        const data = req.body;
         let newStudent = await CRUDservice.createNewStudent(data);
         return res.status(201).json(newStudent);
     } catch (e) {
@@ -32,14 +31,13 @@ let postStudentCRUD = async (req, res) => {
     }
 };
 
-// Gán học sinh vào lớp
 let postClassStudentCRUD = async (req, res) => {
     const { classId, studentId } = req.body;
 
     if (!classId || !studentId) {
         return res
             .status(400)
-            .json({ message: 'Class ID và Student ID là bắt buộc.' });
+            .json({ message: 'Class ID and Student ID are required.' });
     }
 
     try {
@@ -53,14 +51,13 @@ let postClassStudentCRUD = async (req, res) => {
     }
 };
 
-// Hủy gán học sinh khỏi lớp
 let postDeleteClassStudentCRUD = async (req, res) => {
     const { classId, studentId } = req.body;
 
     if (!classId || !studentId) {
         return res
             .status(400)
-            .json({ message: 'Class ID và Student ID là bắt buộc.' });
+            .json({ message: 'Class ID and Student ID are required.' });
     }
 
     try {
@@ -74,7 +71,6 @@ let postDeleteClassStudentCRUD = async (req, res) => {
     }
 };
 
-// Xoá học sinh (tùy chọn nếu cần)
 let postStudentDeleteCRUD = async (req, res) => {
     const { id } = req.body;
 

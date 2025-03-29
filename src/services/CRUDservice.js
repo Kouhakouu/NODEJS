@@ -1,4 +1,3 @@
-// CRUDservice.js
 import bcrypt from 'bcryptjs';
 import db from '../models/index';
 
@@ -36,7 +35,6 @@ let updateTeacherData = async (teacherId, data) => {
             throw new Error('Teacher does not exist!');
         }
 
-        // If password is provided, hash it
         let updatedData = {
             fullName: data.fullName,
             email: data.email,
@@ -49,7 +47,6 @@ let updateTeacherData = async (teacherId, data) => {
         }
 
         await teacher.update(updatedData, { transaction });
-
         await transaction.commit();
         return teacher;
     } catch (e) {
@@ -58,7 +55,6 @@ let updateTeacherData = async (teacherId, data) => {
     }
 };
 
-// New method to delete teacher
 let deleteTeacherData = async (teacherId) => {
     const transaction = await db.sequelize.transaction();
     try {
@@ -67,14 +63,12 @@ let deleteTeacherData = async (teacherId) => {
             throw new Error('Teacher does not exist!');
         }
 
-        // If there are associations (e.g., ClassTeacher), handle them accordingly
         await db.ClassTeacher.destroy({
             where: { teacher_id: teacherId },
             transaction,
         });
 
         await teacher.destroy({ transaction });
-
         await transaction.commit();
         return;
     } catch (e) {
@@ -87,22 +81,18 @@ let createClass = async (data) => {
     const transaction = await db.sequelize.transaction();
     try {
         const { className, gradeLevel, classScheduleId, teacherId } = data;
-
-        // Kiểm tra lịch học tồn tại
         const scheduleId = Number(classScheduleId);
         const schedule = await db.ClassSchedule.findByPk(scheduleId);
         if (!schedule) {
             throw new Error('Lịch học không tồn tại!');
         }
 
-        // Tạo lớp với thông tin bao gồm class_schedule_id
         let newClass = await db.Class.create({
             className,
             gradeLevel,
-            class_schedule_id: scheduleId, // Gán lịch học
+            class_schedule_id: scheduleId,
         }, { transaction });
 
-        // Gán giáo viên cho lớp nếu có teacherId
         if (teacherId) {
             await db.ClassTeacher.create({
                 class_id: newClass.id,
@@ -111,10 +101,10 @@ let createClass = async (data) => {
         }
 
         await transaction.commit();
-        return newClass; // Trả về đối tượng lớp mới tạo
+        return newClass;
     } catch (e) {
         await transaction.rollback();
-        throw e; // Trả về lỗi
+        throw e;
     }
 };
 
@@ -147,6 +137,54 @@ let createNewManager = async (data) => {
     }
 };
 
+// Hàm cập nhật Manager
+let updateManagerData = async (managerId, data) => {
+    const transaction = await db.sequelize.transaction();
+    try {
+        let manager = await db.Manager.findByPk(managerId, { transaction });
+        if (!manager) {
+            throw new Error('Manager does not exist!');
+        }
+
+        let updatedData = {
+            fullName: data.fullName,
+            email: data.email,
+            phoneNumber: data.phoneNumber,
+            gradeLevel: data.gradeLevel, // Vì Manager có thuộc tính gradeLevel
+        };
+
+        if (data.password) {
+            let hashPassword = await bcrypt.hash(data.password, salt);
+            updatedData.password = hashPassword;
+        }
+
+        await manager.update(updatedData, { transaction });
+        await transaction.commit();
+        return manager;
+    } catch (e) {
+        await transaction.rollback();
+        throw e;
+    }
+};
+
+// Hàm xóa Manager
+let deleteManagerData = async (managerId) => {
+    const transaction = await db.sequelize.transaction();
+    try {
+        let manager = await db.Manager.findByPk(managerId, { transaction });
+        if (!manager) {
+            throw new Error('Manager does not exist!');
+        }
+
+        await manager.destroy({ transaction });
+        await transaction.commit();
+        return;
+    } catch (e) {
+        await transaction.rollback();
+        throw e;
+    }
+};
+
 let createNewAssistant = async (data) => {
     try {
         let hashPasswordFromBcrypt = await hashUserPassword(data.password);
@@ -171,26 +209,22 @@ let updateClassData = async (data) => {
         let classScheduleId = Number(data.classScheduleId);
         let teacherId = data.teacherId;
 
-        // Kiểm tra xem lớp học tồn tại
         let existingClass = await db.Class.findByPk(classId, { transaction });
         if (!existingClass) {
             throw new Error('Lớp học không tồn tại!');
         }
 
-        // Kiểm tra lịch học
         let schedule = await db.ClassSchedule.findByPk(classScheduleId, { transaction });
         if (!schedule) {
             throw new Error('Lịch học không tồn tại!');
         }
 
-        // Cập nhật thông tin lớp học
         await existingClass.update({
             className: className,
             gradeLevel: gradeLevel,
             class_schedule_id: classScheduleId,
         }, { transaction });
 
-        // Cập nhật giáo viên nếu cần
         let classTeacher = await db.ClassTeacher.findOne({
             where: { class_id: classId },
             transaction,
@@ -198,7 +232,6 @@ let updateClassData = async (data) => {
         if (classTeacher) {
             await classTeacher.update({ teacher_id: teacherId }, { transaction });
         } else {
-            // Nếu chưa có giáo viên, tạo mới
             await db.ClassTeacher.create({
                 class_id: classId,
                 teacher_id: teacherId,
@@ -206,7 +239,7 @@ let updateClassData = async (data) => {
         }
 
         await transaction.commit();
-        return existingClass; // Trả về lớp đã cập nhật
+        return existingClass;
     } catch (e) {
         await transaction.rollback();
         throw e;
@@ -248,7 +281,7 @@ let getClassById = async (id) => {
                 },
             ],
         });
-        console.log('Class Data:', cls); // Thêm dòng này để kiểm tra
+        console.log('Class Data:', cls);
         return cls;
     } catch (e) {
         throw e;
@@ -288,21 +321,17 @@ let getAllClasses = async () => {
 let deleteClass = async (classId) => {
     const transaction = await db.sequelize.transaction();
     try {
-        // Kiểm tra xem lớp học tồn tại
         let existingClass = await db.Class.findByPk(classId, { transaction });
         if (!existingClass) {
             throw new Error('Lớp học không tồn tại!');
         }
 
-        // Xóa các liên kết với giáo viên trong ClassTeacher
         await db.ClassTeacher.destroy({
             where: { class_id: classId },
             transaction,
         });
 
-        // Xóa lớp học
         await existingClass.destroy({ transaction });
-
         await transaction.commit();
         return 'Class deleted successfully!';
     } catch (e) {
@@ -311,25 +340,18 @@ let deleteClass = async (classId) => {
     }
 };
 
-// Thêm hàm gán lớp cho trợ giảng sử dụng bảng liên kết
 let assignClassToAssistant = async (assistantId, classId) => {
     const transaction = await db.sequelize.transaction();
     try {
         console.log(`Assigning classId: ${classId} to assistantId: ${assistantId}`);
-
-        // Verify assistant exists
         let assistant = await db.Assistant.findByPk(assistantId, { transaction });
         if (!assistant) {
             throw new Error('Assistant does not exist!');
         }
-
-        // Verify class exists
         let cls = await db.Class.findByPk(classId, { transaction });
         if (!cls) {
             throw new Error('Class does not exist!');
         }
-
-        // Check if the relationship already exists
         let existingRelation = await db.Class_Assistant.findOne({
             where: {
                 assistantId: assistantId,
@@ -337,17 +359,13 @@ let assignClassToAssistant = async (assistantId, classId) => {
             },
             transaction,
         });
-
         if (existingRelation) {
             throw new Error('Assistant is already assigned to this class!');
         }
-
-        // Create the association
         await db.Class_Assistant.create({
             assistantId,
             classId,
         }, { transaction });
-
         console.log('Class assigned successfully.');
         await transaction.commit();
         return 'Class assigned to assistant successfully!';
@@ -374,16 +392,11 @@ let deleteAssistant = async (assistantId) => {
         if (!assistant) {
             throw new Error('Trợ giảng không tồn tại!');
         }
-
-        // Xóa các liên kết trong Class_Assistants
         await db.Class_Assistant.destroy({
             where: { assistantId: assistantId },
             transaction,
         });
-
-        // Xóa trợ giảng
         await assistant.destroy({ transaction });
-
         await transaction.commit();
         return 'Assistant deleted successfully!';
     } catch (e) {
@@ -395,7 +408,6 @@ let deleteAssistant = async (assistantId) => {
 let removeClassFromAssistant = async ({ classId, assistantId }) => {
     const transaction = await db.sequelize.transaction();
     try {
-        // Check if the association exists
         const association = await db.Class_Assistant.findOne({
             where: {
                 classId: classId,
@@ -403,14 +415,10 @@ let removeClassFromAssistant = async ({ classId, assistantId }) => {
             },
             transaction,
         });
-
         if (!association) {
             throw new Error('Association does not exist.');
         }
-
-        // Remove the association
         await association.destroy({ transaction });
-
         await transaction.commit();
         return 'Class removed from assistant successfully!';
     } catch (e) {
@@ -435,22 +443,16 @@ let updateAssistantData = async (assistantId, data) => {
         if (!assistant) {
             throw new Error('Assistant does not exist!');
         }
-
-        // Nếu password được truyền lên, ta sẽ bcrypt nó
         let updatedData = {
             fullName: data.fullName,
             email: data.email,
             phoneNumber: data.phoneNumber,
         };
-
         if (data.password) {
             let hashPassword = await bcrypt.hash(data.password, salt);
             updatedData.password = hashPassword;
         }
-
-        // Thực hiện update
         await assistant.update(updatedData, { transaction });
-
         await transaction.commit();
         return assistant;
     } catch (e) {
@@ -461,8 +463,6 @@ let updateAssistantData = async (assistantId, data) => {
 
 let createNewStudent = async (data) => {
     try {
-        // Ở đây không cần hash password vì Student không có trường password (trong ví dụ này),
-        // nhưng nếu có, bạn có thể triển khai như với Teacher, Manager, v.v.
         const newStudent = await db.Student.create({
             fullName: data.fullName,
             DOB: data.DOB,
@@ -477,66 +477,50 @@ let createNewStudent = async (data) => {
 };
 
 let updateStudent = async (data) => {
-    const transaction = await db.sequelize.transaction()
+    const transaction = await db.sequelize.transaction();
     try {
-        // data gửi lên từ frontend: { id, fullName, DOB, school, parentPhoneNumber, parentEmail, classIds[] }
-        const { id, fullName, DOB, school, parentPhoneNumber, parentEmail, classIds } = data
-
-        // 1. Tìm học sinh
-        let student = await db.Student.findByPk(id, { transaction })
+        const { id, fullName, DOB, school, parentPhoneNumber, parentEmail, classIds } = data;
+        let student = await db.Student.findByPk(id, { transaction });
         if (!student) {
-            throw new Error('Student does not exist!')
+            throw new Error('Student does not exist!');
         }
-
-        // 2. Cập nhật thông tin
         await student.update({
             fullName,
             DOB,
             school,
             parentPhoneNumber,
             parentEmail
-        }, { transaction })
-
-        // 3. Cập nhật liên kết Student_Classes
-        // 3.1. Xóa tất cả liên kết cũ
+        }, { transaction });
         await db.Student_Classes.destroy({
             where: { studentId: id },
             transaction
-        })
-
-        // 3.2. Tạo liên kết mới
+        });
         if (classIds && classIds.length > 0) {
             let newLinks = classIds.map(classId => ({
                 studentId: id,
                 classId: classId
-            }))
-            await db.Student_Classes.bulkCreate(newLinks, { transaction })
+            }));
+            await db.Student_Classes.bulkCreate(newLinks, { transaction });
         }
-
-        await transaction.commit()
-        return student
+        await transaction.commit();
+        return student;
     } catch (err) {
-        await transaction.rollback()
-        throw err
+        await transaction.rollback();
+        throw err;
     }
-}
+};
 
 let assignClassToStudent = async (studentId, classId) => {
     const transaction = await db.sequelize.transaction();
     try {
-        // Kiểm tra sự tồn tại của học sinh
         let student = await db.Student.findByPk(studentId, { transaction });
         if (!student) {
             throw new Error('Student does not exist!');
         }
-
-        // Kiểm tra sự tồn tại của lớp
         let cls = await db.Class.findByPk(classId, { transaction });
         if (!cls) {
             throw new Error('Class does not exist!');
         }
-
-        // Kiểm tra xem mối quan hệ đã tồn tại chưa
         let existingRelation = await db.Student_Classes.findOne({
             where: {
                 studentId: studentId,
@@ -544,17 +528,13 @@ let assignClassToStudent = async (studentId, classId) => {
             },
             transaction,
         });
-
         if (existingRelation) {
             throw new Error('Student is already assigned to this class!');
         }
-
-        // Tạo liên kết
         await db.Student_Classes.create({
             studentId,
             classId,
         }, { transaction });
-
         await transaction.commit();
         return 'Class assigned to student successfully!';
     } catch (e) {
@@ -579,11 +559,9 @@ let removeClassFromStudent = async ({ classId, studentId }) => {
             where: { classId, studentId },
             transaction,
         });
-
         if (!association) {
             throw new Error('Association does not exist.');
         }
-
         await association.destroy({ transaction });
         await transaction.commit();
         return 'Class removed from student successfully!';
@@ -609,16 +587,11 @@ let deleteStudent = async (studentId) => {
         if (!student) {
             throw new Error('Student does not exist!');
         }
-
-        // Xoá mọi liên kết với lớp trong Student_Classes
         await db.Student_Classes.destroy({
             where: { studentId },
             transaction,
         });
-
-        // Xoá học sinh
         await student.destroy({ transaction });
-
         await transaction.commit();
         return 'Student deleted successfully!';
     } catch (e) {
@@ -629,17 +602,19 @@ let deleteStudent = async (studentId) => {
 
 module.exports = {
     createNewTeacher: createNewTeacher,
-    createClass: createClass, // Đổi tên này
+    createClass: createClass,
     createNewSchedule: createNewSchedule,
     createNewManager: createNewManager,
+    updateManagerData: updateManagerData,
+    deleteManagerData: deleteManagerData,
     createNewAssistant: createNewAssistant,
     updateClassData: updateClassData,
     getAllClassSchedules: getAllClassSchedules,
     getClassById: getClassById,
     getAllClasses: getAllClasses,
     deleteClass: deleteClass,
-    assignClassToAssistant: assignClassToAssistant, // Thêm vào đây
-    createClassAssistant: createClassAssistant, // Thêm vào đây
+    assignClassToAssistant: assignClassToAssistant,
+    createClassAssistant: createClassAssistant,
     deleteAssistant: deleteAssistant,
     deleteClassAssistant: deleteClassAssistant,
     updateAssistantData: updateAssistantData,
