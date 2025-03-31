@@ -1,34 +1,39 @@
-import express from "express";
-import cors from "cors";
-import bodyParser from "body-parser";
-import viewEngine from "./config/viewEngine";
-import initWebRoutes from "./routes/web";
-import connectDB from "./config/connectDB";
-import dotenv from "dotenv";
-import authRoutes from "./routes/auth.js";
+require('dotenv').config(); // Load env vars first
+const express = require("express");
+const cors = require("cors");
+const bodyParser = require("body-parser");
+const path = require('path'); // Needed for static files if you serve them
 
-dotenv.config();
+const viewEngine = require("./config/viewEngine");
+const initWebRoutes = require("./routes/web");
+const connectDB = require("./config/connectDB");
+const authRoutes = require("./routes/auth.js"); // Assuming auth.js uses CommonJS too
 
 const app = express();
 
-app.use(cors({
-    origin: "http://localhost:3000",
+const allowedOrigins = [
+    'http://localhost:3000', // Your local frontend
+];
+
+const corsOptions = {
+    origin: process.env.CORS_ORIGIN || "*", // More flexible: Use env var or allow all (*) - adjust security as needed!
     methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
-}));
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+};
+app.use(cors(corsOptions));
+app.use(express.json()); // for parsing application/json
+app.use(express.urlencoded({ extended: true })); // for parsing application/x-www-form-urlencoded
 
-viewEngine(app);
+viewEngine(app); // Configure EJS (ensure views path is correct relative to runtime)
+connectDB();   // Attempt database connection
 
-// Đăng ký route cho authentication trước khi các route khác nếu cần
+app.use(express.static(path.join(__dirname, 'public')));
+
 app.use("/auth", authRoutes);
-
 initWebRoutes(app);
-connectDB();
 
-const port = process.env.PORT || 3000;
-
-app.listen(port, () => {
-    console.log(`Backend Node.js is running on port ${port}`);
+app.use((req, res) => {
+    res.status(404).send("Vercel Function Not Found (Internal App Route)");
 });
+
+module.exports = app;
