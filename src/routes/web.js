@@ -64,7 +64,12 @@ let initWebRoutes = (app) => {
     router.get('/assistant/classes/:id', assistantController.getClassStudentDetail);
     router.get('/assistant/classes/:id/lessons', assistantController.getAssistantLessons);
     router.get('/assistant/classes/:id/lessons/:lessonId/students-performance', assistantController.getLessonStudentsPerformance);
-
+    router.post(
+        '/assistant/classes/:classId/lessons/:lessonId/students-performance',
+        authMiddleware, assistantController.postSaveStudentPerformance
+    );
+    router.get('/lessons/:lessonId/homeworklist', assistantController.getLessonHomeworkList);
+    router.post('/lessons/:lessonId/homeworklist', assistantController.updateLessonHomeworkList);
     //trang quản lý
     router.get('/manager/classes', authMiddleware, managerController.getManagerClasses);
     router.get('/manager/students/:id', assistantController.getClassStudentDetail);

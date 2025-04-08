@@ -20,6 +20,11 @@ module.exports = {
                 type: Sequelize.DATE,
                 allowNull: false
             },
+            // Thêm cột homeworkList
+            homeworkList: {
+                type: Sequelize.STRING,
+                allowNull: true
+            },
             createdAt: {
                 allowNull: false,
                 type: Sequelize.DATE

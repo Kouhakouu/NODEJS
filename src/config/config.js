@@ -1,5 +1,5 @@
 require('dotenv').config({ override: true });
-import * as tedious from 'tedious';
+const tedious = require('tedious');
 
 module.exports = {
   development: {

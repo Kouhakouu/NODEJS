@@ -42,6 +42,11 @@ module.exports = (sequelize, DataTypes) => {
         totalTaskLength: {
             type: DataTypes.INTEGER,
             allowNull: false
+        },
+        // Thêm cột homeworkList
+        homeworkList: {
+            type: DataTypes.STRING,
+            allowNull: true
         }
     }, {
         sequelize,

@@ -243,7 +243,130 @@ const getLessonStudentsPerformance = async (req, res) => {
     }
 };
 
+const postSaveStudentPerformance = async (req, res) => {
+    const { studentId, lessonId, performance } = req.body;
+    if (!studentId || !lessonId || !performance) {
+        return res.status(400).json({ message: 'Student ID, Lesson ID và dữ liệu performance là bắt buộc.' });
+    }
+    const { doneTask, totalScore, incorrectTasks, missingTasks, presentation, skills, comment } = performance;
 
+    // Nếu incorrectTasks và missingTasks là mảng, chuyển chúng thành chuỗi phân tách bởi dấu chấm phẩy.
+    const formattedIncorrectTasks = Array.isArray(incorrectTasks) ? incorrectTasks.join("; ") : incorrectTasks;
+    const formattedMissingTasks = Array.isArray(missingTasks) ? missingTasks.join("; ") : missingTasks;
+
+    const t = await db.sequelize.transaction();
+
+    try {
+        // Bước 1: Tìm các bản ghi liên kết trong StudentPerformanceStudent theo studentId
+        const performanceStudentRecords = await db.StudentPerformanceStudent.findAll({
+            where: { studentId },
+            transaction: t
+        });
+
+        // Lấy danh sách các studentPerformanceId
+        const performanceIds = performanceStudentRecords.map(record => record.studentPerformanceId);
+
+        let existingPerformance = null;
+        if (performanceIds.length > 0) {
+            // Bước 2: Tìm bản ghi trong StudentPerformanceLesson với lessonId được truyền và thuộc một trong các performanceIds trên
+            const performanceLessonRecord = await db.StudentPerformanceLesson.findOne({
+                where: {
+                    studentPerformanceId: performanceIds,
+                    lessonId: lessonId
+                },
+                transaction: t
+            });
+            if (performanceLessonRecord) {
+                // Nếu đã tồn tại, lấy bản ghi StudentPerformance chính
+                existingPerformance = await db.StudentPerformance.findByPk(performanceLessonRecord.studentPerformanceId, { transaction: t });
+            }
+        }
+
+        let performanceRecord;
+        if (existingPerformance) {
+            // Nếu đã tồn tại bản ghi cho cặp học sinh – buổi học, update dữ liệu
+            performanceRecord = await existingPerformance.update({
+                doneTask,
+                totalScore,
+                incorrectTasks: formattedIncorrectTasks,
+                missingTasks: formattedMissingTasks,
+                presentation,
+                skills,
+                comment
+            }, { transaction: t });
+        } else {
+            // Nếu chưa tồn tại, tạo mới bản ghi và thiết lập liên kết cho StudentPerformanceLesson và StudentPerformanceStudent
+            performanceRecord = await db.StudentPerformance.create({
+                doneTask,
+                totalScore,
+                incorrectTasks: formattedIncorrectTasks,
+                missingTasks: formattedMissingTasks,
+                presentation,
+                skills,
+                comment
+            }, { transaction: t });
+
+            await db.StudentPerformanceLesson.create({
+                studentPerformanceId: performanceRecord.id,
+                lessonId
+            }, { transaction: t });
+
+            await db.StudentPerformanceStudent.create({
+                studentPerformanceId: performanceRecord.id,
+                studentId
+            }, { transaction: t });
+        }
+
+        await t.commit();
+        return res.status(200).json({ message: 'Lưu kết quả học tập thành công!', studentPerformance: performanceRecord });
+    } catch (error) {
+        await t.rollback();
+        console.error(error);
+        return res.status(500).json({ message: error.message || 'Lỗi khi lưu kết quả học tập.' });
+    }
+};
+
+const getLessonHomeworkList = async (req, res) => {
+    try {
+        const lessonId = parseInt(req.params.lessonId, 10);
+        const lesson = await db.Lesson.findByPk(lessonId, {
+            attributes: ['id', 'homeworkList']
+        });
+        if (!lesson) {
+            return res.status(404).json({ message: 'Lesson not found' });
+        }
+        return res.status(200).json({ homeworkList: lesson.homeworkList });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ message: 'Error fetching homework list for the lesson' });
+    }
+};
+
+const updateLessonHomeworkList = async (req, res) => {
+    try {
+        const lessonId = parseInt(req.params.lessonId, 10);
+        const { homeworkList } = req.body;
+        if (typeof homeworkList !== "string") {
+            return res.status(400).json({ message: 'Homework list must be provided as a string.' });
+        }
+
+        const lesson = await db.Lesson.findByPk(lessonId);
+        if (!lesson) {
+            return res.status(404).json({ message: 'Lesson not found' });
+        }
+        // Nếu lesson đã có danh sách bài tập thì cập nhật (thay thế hoàn toàn)
+        lesson.homeworkList = homeworkList;
+        await lesson.save();
+
+        return res.status(200).json({
+            message: 'Homework list updated successfully',
+            homeworkList: lesson.homeworkList
+        });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ message: 'Error updating homework list for the lesson' });
+    }
+};
 
 module.exports = {
     getAssistantInfo: getAssistantInfo,
@@ -254,5 +377,8 @@ module.exports = {
     getAssistantClasses: getAssistantClasses,
     getClassStudentDetail: getClassStudentDetail,
     getAssistantLessons: getAssistantLessons,
-    getLessonStudentsPerformance: getLessonStudentsPerformance
+    getLessonStudentsPerformance: getLessonStudentsPerformance,
+    postSaveStudentPerformance: postSaveStudentPerformance,
+    getLessonHomeworkList: getLessonHomeworkList,
+    updateLessonHomeworkList: updateLessonHomeworkList,
 }
