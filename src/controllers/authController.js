@@ -40,6 +40,7 @@ exports.login = async (req, res) => {
             user: { id: user.id, email: user.email, role: userType, fullName: user.fullName }
         });
     } catch (error) {
+        console.error(error);
         return res.status(500).json({ message: 'Có lỗi xảy ra', error });
     }
 };
