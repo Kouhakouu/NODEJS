@@ -200,28 +200,39 @@ const getLessonStudentsPerformance = async (req, res) => {
             return res.status(404).json({ message: 'Class not found' });
         }
 
-        // Lấy danh sách các học sinh
         const studentIds = classDetail.students.map(student => student.id);
 
-        // Truy vấn tất cả các performance của học sinh liên quan đến lessonId
-        const performances = await db.Performance.findAll({
-            include: [{
-                model: db.Lesson,
-                where: { id: lessonId },
-                attributes: [] // không cần lấy thông tin của Lesson
-            }],
-            where: { studentId: { [db.Sequelize.Op.in]: studentIds } }
+        // Truy vấn StudentPerformance (được định nghĩa trong file studentPerformance.js)
+        const performances = await db.StudentPerformance.findAll({
+            include: [
+                {
+                    model: db.Lesson,
+                    where: { id: lessonId },
+                    attributes: [],
+                    through: { attributes: [] }
+                },
+                {
+                    model: db.Student,
+                    where: { id: { [db.Sequelize.Op.in]: studentIds } },
+                    attributes: ['id'],
+                    through: { attributes: [] }
+                }
+            ]
         });
 
-        // Tạo map theo studentId (nếu có nhiều bản ghi, chỉ lưu bản ghi đầu tiên)
+        // Xây dựng map theo studentId (giả sử mỗi performance chỉ liên quan đến 1 học sinh)
         const performanceMap = {};
         performances.forEach(perf => {
-            if (!performanceMap[perf.studentId]) {
-                performanceMap[perf.studentId] = perf.toJSON();
+            if (perf.Students && perf.Students.length > 0) {
+                const studentId = perf.Students[0].id;
+                // Nếu có nhiều performance cho 1 học sinh, chỉ lấy bản ghi đầu tiên
+                if (!performanceMap[studentId]) {
+                    performanceMap[studentId] = perf.toJSON();
+                }
             }
         });
 
-        // Truy vấn bảng LessonStudent cho lessonId và các học sinh
+        // Truy vấn bảng LessonStudent cho lessonId và các học sinh liên quan
         const lessonStudents = await db.LessonStudent.findAll({
             where: {
                 lessonId,
