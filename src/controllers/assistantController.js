@@ -183,6 +183,8 @@ const getLessonStudentsPerformance = async (req, res) => {
     try {
         const classId = parseInt(req.params.id, 10);
         const lessonId = parseInt(req.params.lessonId, 10);
+
+        // Lấy thông tin lớp và danh sách học sinh
         const classDetail = await db.Class.findByPk(classId, {
             include: [
                 {
@@ -198,50 +200,71 @@ const getLessonStudentsPerformance = async (req, res) => {
             return res.status(404).json({ message: 'Class not found' });
         }
 
-        const studentsWithPerformance = await Promise.all(
-            classDetail.students.map(async (student) => {
-                const performances = await student.getPerformances({
-                    include: [{
-                        model: db.Lesson,
-                        where: { id: lessonId },
-                        through: { attributes: [] }
-                    }],
-                    limit: 1
-                });
-                const performance = performances[0] ? performances[0].toJSON() : null;
+        // Lấy danh sách các học sinh
+        const studentIds = classDetail.students.map(student => student.id);
 
-                const lessonStudent = await db.LessonStudent.findOne({
-                    where: {
-                        lessonId: lessonId,
-                        studentId: student.id
-                    }
-                });
+        // Truy vấn tất cả các performance của học sinh liên quan đến lessonId
+        const performances = await db.Performance.findAll({
+            include: [{
+                model: db.Lesson,
+                where: { id: lessonId },
+                attributes: [] // không cần lấy thông tin của Lesson
+            }],
+            where: { studentId: { [db.Sequelize.Op.in]: studentIds } }
+        });
 
-                return {
-                    id: student.id,
-                    fullName: student.fullName,
-                    school: student.school,
-                    parentPhoneNumber: student.parentPhoneNumber,
-                    parentEmail: student.parentEmail,
-                    attendance: lessonStudent ? lessonStudent.attendance : false,
-                    performance: performance ? {
-                        doneTask: performance.doneTask,
-                        totalScore: performance.totalScore,
-                        incorrectTasks: performance.incorrectTasks,
-                        missingTasks: performance.missingTasks,
-                        presentation: performance.presentation,
-                        skills: performance.skills,
-                        comment: performance.comment
-                    } : null
-                };
-            })
-        );
+        // Tạo map theo studentId (nếu có nhiều bản ghi, chỉ lưu bản ghi đầu tiên)
+        const performanceMap = {};
+        performances.forEach(perf => {
+            if (!performanceMap[perf.studentId]) {
+                performanceMap[perf.studentId] = perf.toJSON();
+            }
+        });
+
+        // Truy vấn bảng LessonStudent cho lessonId và các học sinh
+        const lessonStudents = await db.LessonStudent.findAll({
+            where: {
+                lessonId,
+                studentId: { [db.Sequelize.Op.in]: studentIds }
+            }
+        });
+
+        // Tạo map từ lessonStudent theo studentId
+        const lessonStudentMap = {};
+        lessonStudents.forEach(ls => {
+            lessonStudentMap[ls.studentId] = ls;
+        });
+
+        // Ghép dữ liệu kết quả cho từng học sinh
+        const studentsWithPerformance = classDetail.students.map(student => {
+            const perf = performanceMap[student.id] || null;
+            const ls = lessonStudentMap[student.id] || null;
+            return {
+                id: student.id,
+                fullName: student.fullName,
+                school: student.school,
+                parentPhoneNumber: student.parentPhoneNumber,
+                parentEmail: student.parentEmail,
+                attendance: ls ? ls.attendance : false,
+                performance: perf ? {
+                    doneTask: perf.doneTask,
+                    totalScore: perf.totalScore,
+                    incorrectTasks: perf.incorrectTasks,
+                    missingTasks: perf.missingTasks,
+                    presentation: perf.presentation,
+                    skills: perf.skills,
+                    comment: perf.comment
+                } : null
+            };
+        });
+
         return res.status(200).json(studentsWithPerformance);
     } catch (e) {
         console.error(e);
         return res.status(500).json({ message: 'Error fetching students performance' });
     }
 };
+
 
 const postSaveStudentPerformance = async (req, res) => {
     const { studentId, lessonId, performance } = req.body;
