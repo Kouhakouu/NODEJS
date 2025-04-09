@@ -276,7 +276,6 @@ const getLessonStudentsPerformance = async (req, res) => {
     }
 };
 
-
 const postSaveStudentPerformance = async (req, res) => {
     const { studentId, lessonId, performance } = req.body;
     if (!studentId || !lessonId || !performance) {
@@ -284,41 +283,31 @@ const postSaveStudentPerformance = async (req, res) => {
     }
     const { doneTask, totalScore, incorrectTasks, missingTasks, presentation, skills, comment } = performance;
 
-    // Nếu incorrectTasks và missingTasks là mảng, chuyển chúng thành chuỗi phân tách bởi dấu chấm phẩy.
     const formattedIncorrectTasks = Array.isArray(incorrectTasks) ? incorrectTasks.join("; ") : incorrectTasks;
     const formattedMissingTasks = Array.isArray(missingTasks) ? missingTasks.join("; ") : missingTasks;
 
     const t = await db.sequelize.transaction();
 
     try {
-        // Bước 1: Tìm các bản ghi liên kết trong StudentPerformanceStudent theo studentId
-        const performanceStudentRecords = await db.StudentPerformanceStudent.findAll({
-            where: { studentId },
+        const existingPerformance = await db.StudentPerformance.findOne({
+            include: [
+                {
+                    model: db.Student,
+                    where: { id: studentId },
+                    through: { attributes: [] }
+                },
+                {
+                    model: db.Lesson,
+                    where: { id: lessonId },
+                    through: { attributes: [] }
+                }
+            ],
             transaction: t
         });
 
-        // Lấy danh sách các studentPerformanceId
-        const performanceIds = performanceStudentRecords.map(record => record.studentPerformanceId);
-
-        let existingPerformance = null;
-        if (performanceIds.length > 0) {
-            // Bước 2: Tìm bản ghi trong StudentPerformanceLesson với lessonId được truyền và thuộc một trong các performanceIds trên
-            const performanceLessonRecord = await db.StudentPerformanceLesson.findOne({
-                where: {
-                    studentPerformanceId: performanceIds,
-                    lessonId: lessonId
-                },
-                transaction: t
-            });
-            if (performanceLessonRecord) {
-                // Nếu đã tồn tại, lấy bản ghi StudentPerformance chính
-                existingPerformance = await db.StudentPerformance.findByPk(performanceLessonRecord.studentPerformanceId, { transaction: t });
-            }
-        }
-
         let performanceRecord;
         if (existingPerformance) {
-            // Nếu đã tồn tại bản ghi cho cặp học sinh – buổi học, update dữ liệu
+            // Nếu đã tồn tại, cập nhật dữ liệu performance.
             performanceRecord = await existingPerformance.update({
                 doneTask,
                 totalScore,
@@ -329,7 +318,7 @@ const postSaveStudentPerformance = async (req, res) => {
                 comment
             }, { transaction: t });
         } else {
-            // Nếu chưa tồn tại, tạo mới bản ghi và thiết lập liên kết cho StudentPerformanceLesson và StudentPerformanceStudent
+            // Nếu chưa tồn tại, tạo mới bản ghi StudentPerformance
             performanceRecord = await db.StudentPerformance.create({
                 doneTask,
                 totalScore,
