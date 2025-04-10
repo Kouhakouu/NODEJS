@@ -1,43 +1,59 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { Admin, Manager, Teacher, Assistant } = require('../models');
+const { sequelize } = require('../models');
 require('dotenv').config();
 
-// Hàm đăng nhập
 exports.login = async (req, res) => {
     const { email, password } = req.body;
     try {
-        let user = await Admin.findOne({ where: { email } });
-        let userType = 'Admin';
-        if (!user) {
-            user = await Manager.findOne({ where: { email } });
-            userType = 'Manager';
-        }
-        if (!user) {
-            user = await Teacher.findOne({ where: { email } });
-            userType = 'Teacher';
-        }
-        if (!user) {
-            user = await Assistant.findOne({ where: { email } });
-            userType = 'Assistant';
-        }
+        // Tạo truy vấn sử dụng CTE kết hợp dữ liệu từ bốn bảng
+        const users = await sequelize.query(
+            `
+      WITH userCTE (id, email, password, fullName, type) AS (
+        SELECT id, email, password, fullName, 'Admin' AS role FROM "Admins"
+        UNION ALL
+        SELECT id, email, password, fullName, 'Manager' AS role FROM "Managers"
+        UNION ALL
+        SELECT id, email, password, fullName, 'Teacher' AS role FROM "Teachers"
+        UNION ALL
+        SELECT id, email, password, fullName, 'Assistant' AS role FROM "Assistants"
+      )
+      SELECT * FROM userCTE
+      WHERE email = :email
+      `,
+            {
+                replacements: { email },
+                type: sequelize.QueryTypes.SELECT,
+            }
+        );
+
+        // Kiểm tra xem có tìm thấy người dùng hay không
+        const user = users[0];
         if (!user) {
             return res.status(401).json({ message: 'Email không tồn tại.' });
         }
-        //check password
+
+        // So sánh mật khẩu hash
         const isValidPassword = bcrypt.compareSync(password, user.password);
         if (!isValidPassword) {
             return res.status(401).json({ message: 'Mật khẩu không đúng.' });
         }
-        // Tạo token chứa id và loại người dùng
+
+        // Tạo JSON Web Token chứa id và role của người dùng
         const token = jwt.sign(
-            { id: user.id, role: userType },
+            { id: user.id, role: user.role },
             process.env.JWT_SECRET,
             { expiresIn: '1h' }
         );
+
         return res.status(200).json({
             token,
-            user: { id: user.id, email: user.email, role: userType, fullName: user.fullName }
+            user: {
+                id: user.id,
+                email: user.email,
+                role: user.role,
+                fullName: user.fullName,
+            },
         });
     } catch (error) {
         console.error(error);
@@ -45,7 +61,6 @@ exports.login = async (req, res) => {
     }
 };
 
-// Hàm đăng xuất
-exports.logout = async (req, res) => {
+exports.logout = (req, res) => {
     return res.status(200).json({ message: 'Đăng xuất thành công.' });
 };
