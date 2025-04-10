@@ -9,14 +9,14 @@ exports.login = async (req, res) => {
         // Tạo truy vấn sử dụng CTE kết hợp dữ liệu từ bốn bảng
         const users = await sequelize.query(
             `
-      WITH userCTE (id, email, password, fullName, type) AS (
-        SELECT id, email, password, fullName, 'Admin' AS role FROM "Admins"
+      WITH userCTE (id, email, password, fullName, role) AS (
+        SELECT id, email, password, fullName, 'Admin' FROM "Admins"
         UNION ALL
-        SELECT id, email, password, fullName, 'Manager' AS role FROM "Managers"
+        SELECT id, email, password, fullName, 'Manager' FROM "Managers"
         UNION ALL
-        SELECT id, email, password, fullName, 'Teacher' AS role FROM "Teachers"
+        SELECT id, email, password, fullName, 'Teacher' FROM "Teachers"
         UNION ALL
-        SELECT id, email, password, fullName, 'Assistant' AS role FROM "Assistants"
+        SELECT id, email, password, fullName, 'Assistant' FROM "Assistants"
       )
       SELECT * FROM userCTE
       WHERE email = :email
