@@ -1,66 +1,88 @@
+// controllers/authController.js
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { sequelize } = require('../models');
+const {
+    User,
+    Role,
+    Admin,
+    Assistant,
+    Teacher,
+    Manager
+} = require('../models');
 require('dotenv').config();
 
 exports.login = async (req, res) => {
     const { email, password } = req.body;
-    try {
-        // Tạo truy vấn sử dụng CTE kết hợp dữ liệu từ bốn bảng
-        const users = await sequelize.query(
-            `
-      WITH userCTE (id, email, password, fullName, role) AS (
-        SELECT id, email, password, fullName, 'Admin' FROM "Admins"
-        UNION ALL
-        SELECT id, email, password, fullName, 'Manager' FROM "Managers"
-        UNION ALL
-        SELECT id, email, password, fullName, 'Teacher' FROM "Teachers"
-        UNION ALL
-        SELECT id, email, password, fullName, 'Assistant' FROM "Assistants"
-      )
-      SELECT * FROM userCTE
-      WHERE email = :email
-      `,
-            {
-                replacements: { email },
-                type: sequelize.QueryTypes.SELECT,
-            }
-        );
 
-        // Kiểm tra xem có tìm thấy người dùng hay không
-        const user = users[0];
+    try {
+        // 1. Tìm user
+        const user = await User.findOne({
+            where: { email },
+            include: [
+                { model: Role, as: 'role', attributes: ['roleName'] },
+                { model: Admin, as: 'adminProfile', attributes: ['fullName'] },
+                { model: Assistant, as: 'assistantProfile', attributes: ['fullName'] },
+                { model: Teacher, as: 'teacherProfile', attributes: ['fullName'] },
+                { model: Manager, as: 'managerProfile', attributes: ['fullName', 'gradeLevel'] }
+            ]
+        });
+
         if (!user) {
             return res.status(401).json({ message: 'Email không tồn tại.' });
         }
 
-        // So sánh mật khẩu hash
-        const isValidPassword = bcrypt.compareSync(password, user.password);
-        if (!isValidPassword) {
+        // 2. So sánh mật khẩu
+        const valid = await bcrypt.compare(password, user.password);
+        if (!valid) {
             return res.status(401).json({ message: 'Mật khẩu không đúng.' });
         }
 
-        // Tạo JSON Web Token chứa id và role của người dùng
+        // 3. Lấy roleName và fullName từ đúng profile
+        const roleName = user.role.roleName;
+        let fullName = null, gradeLevel = null;
+        switch (roleName) {
+            case 'Admin':
+                fullName = user.adminProfile?.fullName;
+                break;
+            case 'Assistant':
+                fullName = user.assistantProfile?.fullName;
+                break;
+            case 'Teacher':
+                fullName = user.teacherProfile?.fullName;
+                break;
+            case 'Manager':
+                fullName = user.managerProfile?.fullName;
+                gradeLevel = user.managerProfile?.gradeLevel;
+                break;
+        }
+
+        // 4. Tạo token
         const token = jwt.sign(
-            { id: user.id, role: user.role },
+            { userId: user.userId, role: roleName },
             process.env.JWT_SECRET,
             { expiresIn: '1h' }
         );
 
-        return res.status(200).json({
+        // 5. Trả về
+        return res.json({
             token,
             user: {
-                id: user.id,
+                id: user.userId,
                 email: user.email,
-                role: user.role,
-                fullName: user.fullName,
-            },
+                role: roleName,
+                fullName,
+                ...(gradeLevel && { gradeLevel })
+            }
         });
-    } catch (error) {
-        console.error(error);
-        return res.status(500).json({ message: 'Có lỗi xảy ra', error });
+
+    } catch (err) {
+        console.error(
+            err.original?.errors?.map(e => e.message) || err.message
+        );
+        return res.status(500).json({ message: 'Login failed' });
     }
 };
 
-exports.logout = (req, res) => {
-    return res.status(200).json({ message: 'Đăng xuất thành công.' });
+exports.logout = (_req, res) => {
+    return res.json({ message: 'Đăng xuất thành công.' });
 };

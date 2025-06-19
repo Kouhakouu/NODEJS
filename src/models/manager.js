@@ -1,43 +1,32 @@
+// models/manager.js
 'use strict';
 const { Model } = require('sequelize');
 module.exports = (sequelize, DataTypes) => {
     class Manager extends Model {
-        /**
-         * Helper method for defining associations.
-         */
         static associate(models) {
-            // Một Manager quản lý nhiều Class thông qua gradeLevel
+            Manager.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
         }
     }
-    Manager.init({
-        fullName: {
-            type: DataTypes.STRING,
-            allowNull: false
+    Manager.init(
+        {
+            userId: {
+                type: DataTypes.INTEGER,
+                primaryKey: true,
+                allowNull: false,
+                references: { model: 'Users', key: 'userId' },
+                onUpdate: 'CASCADE',
+                onDelete: 'CASCADE',
+            },
+            fullName: { type: DataTypes.STRING, allowNull: false },
+            phoneNumber: { type: DataTypes.STRING },          // tuỳ chọn
+            gradeLevel: { type: DataTypes.STRING },          // ví dụ: "Grade 10"
         },
-        email: {
-            type: DataTypes.STRING,
-            allowNull: false,
-            unique: true,
-            validate: {
-                isEmail: true
-            }
-        },
-        phoneNumber: {
-            type: DataTypes.STRING,
-            allowNull: false
-        },
-        password: {
-            type: DataTypes.STRING,
-            allowNull: false
-        },
-        gradeLevel: {
-            type: DataTypes.STRING,
-            allowNull: false
+        {
+            sequelize,
+            modelName: 'Manager',
+            tableName: 'Managers',
+            timestamps: true,
         }
-    }, {
-        sequelize,
-        modelName: 'Manager',
-        tableName: 'Managers'
-    });
+    );
     return Manager;
 };

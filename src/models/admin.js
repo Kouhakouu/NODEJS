@@ -1,36 +1,31 @@
+// models/admin.js
 'use strict';
 const { Model } = require('sequelize');
 module.exports = (sequelize, DataTypes) => {
     class Admin extends Model {
-        /**
-         * Helper method for defining associations.
-         */
-    }
-    Admin.init({
-        fullName: {
-            type: DataTypes.STRING,
-            allowNull: false
-        },
-        email: {
-            type: DataTypes.STRING,
-            allowNull: false,
-            unique: true,
-            validate: {
-                isEmail: true
-            }
-        },
-        phoneNumber: {
-            type: DataTypes.STRING,
-            allowNull: false
-        },
-        password: {
-            type: DataTypes.STRING,
-            allowNull: false
+        static associate(models) {
+            Admin.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
         }
-    }, {
-        sequelize,
-        modelName: 'Admin',
-        tableName: 'Admins'
-    });
+    }
+    Admin.init(
+        {
+            userId: {
+                type: DataTypes.INTEGER,
+                primaryKey: true,
+                allowNull: false,
+                references: { model: 'Users', key: 'userId' },
+                onUpdate: 'CASCADE',
+                onDelete: 'CASCADE',
+            },
+            fullName: { type: DataTypes.STRING, allowNull: false },
+            phoneNumber: { type: DataTypes.STRING, allowNull: false },
+        },
+        {
+            sequelize,
+            modelName: 'Admin',
+            tableName: 'Admins',
+            timestamps: true,
+        }
+    );
     return Admin;
 };

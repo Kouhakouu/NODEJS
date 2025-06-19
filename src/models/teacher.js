@@ -1,41 +1,31 @@
+// models/teacher.js
 'use strict';
 const { Model } = require('sequelize');
 module.exports = (sequelize, DataTypes) => {
     class Teacher extends Model {
-        /**
-         * Helper method for defining associations.
-         */
         static associate(models) {
-            // Một giáo viên có một lớp học thông qua ClassTeacher
-            Teacher.hasOne(models.ClassTeacher, { foreignKey: 'teacher_id', as: 'classTeacher' });
-
+            Teacher.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
         }
-    };
-    Teacher.init({
-        fullName: {
-            type: DataTypes.STRING,
-            allowNull: false
+    }
+    Teacher.init(
+        {
+            userId: {
+                type: DataTypes.INTEGER,
+                primaryKey: true,
+                allowNull: false,
+                references: { model: 'Users', key: 'userId' },
+                onUpdate: 'CASCADE',
+                onDelete: 'CASCADE',
+            },
+            fullName: { type: DataTypes.STRING, allowNull: false },
+            phoneNumber: { type: DataTypes.STRING },          // tuỳ chọn
         },
-        email: {
-            type: DataTypes.STRING,
-            allowNull: false,
-            unique: true,
-            validate: {
-                isEmail: true
-            }
-        },
-        phoneNumber: {
-            type: DataTypes.STRING,
-            allowNull: false
-        },
-        password: {
-            type: DataTypes.STRING,
-            allowNull: false
+        {
+            sequelize,
+            modelName: 'Teacher',
+            tableName: 'Teachers',
+            timestamps: true,
         }
-    }, {
-        sequelize,
-        modelName: 'Teacher',
-        tableName: 'Teachers'
-    });
+    );
     return Teacher;
 };

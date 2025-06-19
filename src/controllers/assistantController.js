@@ -1,39 +1,97 @@
-import db from '../models/index'
-import CRUDservice from '../services/CRUDservice'
+const bcrypt = require('bcryptjs');
+import db from '../models/index';
+import CRUDservice from '../services/CRUDservice';
 
-//trang admin
-let getAssistantInfo = async (req, res) => {
+// Trang admin: lấy thông tin trợ giảng kèm lớp
+const getAssistantInfo = async (req, res) => {
     try {
-        let assistants = await db.Assistant.findAll({
+        const assistants = await db.Assistant.findAll({
+            attributes: ['userId', 'fullName', 'phoneNumber'],
             include: [
+                {
+                    model: db.User,
+                    as: 'user',
+                    attributes: ['email']
+                },
                 {
                     model: db.Class,
                     as: 'classes',
                     attributes: ['id', 'className', 'gradeLevel'],
-                    through: { attributes: [] },
-                },
-            ],
+                    through: { attributes: [] }
+                }
+            ]
         });
-        return res.status(200).json(assistants);
-    } catch (e) {
-        console.error(e);
+
+        const result = assistants.map(a => ({
+            userId: a.userId,
+            fullName: a.fullName,
+            phoneNumber: a.phoneNumber,
+            email: a.user?.email || null,
+            classes: a.classes || []
+        }));
+
+        return res.status(200).json(result);
+    } catch (error) {
+        console.error('getAssistantInfo error:', error);
         return res.status(500).json({ message: 'Error fetching assistant data.' });
     }
 };
 
-let postClassAssistantCRUD = async (req, res) => {
-    const { classId, assistantId } = req.body;
+const createAssistant = async (req, res) => {
+    try {
+        const { fullName, email, phoneNumber, password } = req.body;
+        if (!fullName || !email || !password) {
+            return res.status(400).json({ message: 'Vui lòng nhập đầy đủ thông tin.' });
+        }
 
+        const hashed = await bcrypt.hash(password, 10);
+        const user = await db.User.create({ email, password: hashed, roleId: 4 });
+        const assistant = await db.Assistant.create({
+            userId: user.userId,
+            fullName,
+            phoneNumber
+        });
+
+        return res.status(201).json({
+            message: 'Tạo trợ giảng thành công!',
+            assistant: {
+                userId: assistant.userId,
+                fullName: assistant.fullName,
+                phoneNumber: assistant.phoneNumber,
+                email: user.email
+            }
+        });
+    } catch (error) {
+        console.error('createAssistant error:', error);
+        return res.status(500).json({ message: error.message || 'Internal server error' });
+    }
+};
+
+const postClassAssistantCRUD = async (req, res) => {
+    const { classId, assistantId } = req.body;
     if (!classId || !assistantId) {
         return res.status(400).json({ message: 'Class ID and Assistant ID are required.' });
     }
-
     try {
         let result = await CRUDservice.createClassAssistant({ classId, assistantId });
         return res.status(200).json({ message: result });
     } catch (e) {
         console.error(e);
         return res.status(500).json({ message: e.message || 'Error assigning class to assistant.' });
+    }
+};
+
+const postDeleteClassAssistantCRUD = async (req, res) => {
+    const { classId, assistantId } = req.body;
+    if (!classId || !assistantId) {
+        return res.status(400).json({ message: 'Class ID and Assistant ID are required.' });
+    }
+    try {
+        let result = await CRUDservice.deleteClassAssistant({ classId, assistantId });
+        return res.status(200).json({ message: result });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ message: e.message || 'Error removing class from assistant.' });
     }
 };
 
@@ -49,22 +107,6 @@ let postAssistantDeleteCRUD = async (req, res) => {
     } catch (e) {
         console.error(e);
         return res.status(500).json({ message: e.message || 'Error deleting assistant.' });
-    }
-};
-
-let postDeleteClassAssistantCRUD = async (req, res) => {
-    const { classId, assistantId } = req.body;
-
-    if (!classId || !assistantId) {
-        return res.status(400).json({ message: 'Class ID and Assistant ID are required.' });
-    }
-
-    try {
-        let result = await CRUDservice.deleteClassAssistant({ classId, assistantId });
-        return res.status(200).json({ message: result });
-    } catch (e) {
-        console.error(e);
-        return res.status(500).json({ message: e.message || 'Error removing class from assistant.' });
     }
 };
 
@@ -88,26 +130,58 @@ let updateAssistant = async (req, res) => {
 //trang trợ giảng
 const getAssistantClasses = async (req, res) => {
     try {
-        const assistantId = req.user.id;
+        const assistantId = req.user.userId;
 
-        let assistant = await db.Assistant.findByPk(assistantId, {
-            include: [
-                {
-                    model: db.Class,
-                    as: 'classes',
-                    attributes: ['id', 'className', 'gradeLevel'],
-                    through: { attributes: [] }
-                }
-            ]
+        // Tìm trợ giảng & lấy kèm các lớp + lịch + sĩ số + số bài
+        const assistant = await db.Assistant.findByPk(assistantId, {
+            include: [{
+                model: db.Class,
+                as: 'classes',
+                attributes: ['id', 'className', 'gradeLevel'],
+                through: { attributes: [] },
+                include: [
+                    {                             // lịch học
+                        model: db.ClassSchedule,
+                        as: 'classSchedule',
+                        attributes: ['study_day', 'start_time', 'end_time']
+                    },
+                    {                             // để đếm sĩ số
+                        model: db.Student,
+                        as: 'students',
+                        attributes: ['id']
+                    },
+                    {                             // để đếm bài / buổi
+                        model: db.Lesson,
+                        as: 'lessons',
+                        attributes: ['id']
+                    }
+                ]
+            }]
         });
 
         if (!assistant) {
             return res.status(404).json({ message: 'Assistant not found' });
         }
 
-        return res.status(200).json(assistant.classes);
-    } catch (e) {
-        console.error(e);
+        // Chuyển lớp về dạng gọn gửi cho FE
+        const result = assistant.classes.map(c => ({
+            id: c.id,
+            className: c.className,
+            gradeLevel: c.gradeLevel,
+            studentsCount: c.students?.length ?? 0,
+            assignmentsCount: c.lessons?.length ?? 0,
+            schedule: c.classSchedule           // null nếu chưa có
+                ? {
+                    study_day: c.classSchedule.study_day,
+                    start_time: c.classSchedule.start_time,
+                    end_time: c.classSchedule.end_time
+                }
+                : null
+        }));
+
+        return res.status(200).json(result);
+    } catch (err) {
+        console.error(err);
         return res.status(500).json({ message: 'Error fetching assistant classes' });
     }
 };
@@ -122,7 +196,7 @@ const getClassStudentDetail = async (req, res) => {
                 {
                     model: db.Student,
                     as: 'students',
-                    attributes: ['id', 'fullName', 'school', 'parentPhoneNumber', 'parentEmail'],
+                    attributes: ['id', 'fullName', 'DOB', 'school', 'parentPhoneNumber', 'parentEmail'],
                     required: false, // returns the class even if there are no students
                     through: { attributes: [] }
                 },
@@ -391,8 +465,81 @@ const updateLessonHomeworkList = async (req, res) => {
     }
 };
 
+const updateLessonContent = async (req, res) => {
+    try {
+        const classId = parseInt(req.params.classId, 10);
+        const lessonId = parseInt(req.params.lessonId, 10);
+        const { lessonContent } = req.body;
+
+        if (!lessonContent || lessonContent.trim() === '') {
+            return res.status(400).json({ message: 'Nội dung buổi học không được để trống.' });
+        }
+
+        // Kiểm tra buổi học có tồn tại
+        const lesson = await db.Lesson.findByPk(lessonId);
+        if (!lesson) {
+            return res.status(404).json({ message: 'Buổi học không tồn tại.' });
+        }
+
+        // (Tùy chọn) Kiểm tra buổi học có thuộc lớp đó không
+        const isInClass = await db.LessonClass.findOne({
+            where: { lessonId, classId }
+        });
+        if (!isInClass) {
+            return res.status(400).json({ message: 'Buổi học này không thuộc lớp hiện tại.' });
+        }
+
+        // Cập nhật nội dung và lưu
+        lesson.lessonContent = lessonContent;
+        await lesson.save();
+
+        return res.status(200).json({
+            message: 'Cập nhật nội dung buổi học thành công!',
+            lesson: {
+                id: lesson.id,
+                lessonContent: lesson.lessonContent,
+                lessonDate: lesson.lessonDate,
+                totalTaskLength: lesson.totalTaskLength
+            }
+        });
+    } catch (error) {
+        console.error('updateLessonContent error:', error);
+        return res.status(500).json({ message: 'Lỗi khi cập nhật nội dung buổi học.' });
+    }
+};
+
+const getLessonInfo = async (req, res) => {
+    try {
+        const classId = parseInt(req.params.classId, 10);
+        const lessonId = parseInt(req.params.lessonId, 10);
+
+        // (Tùy chọn) Kiểm tra buổi học có thực sự thuộc lớp không
+        const mapping = await db.LessonClass.findOne({
+            where: { classId, lessonId }
+        });
+        if (!mapping) {
+            return res.status(404).json({ message: 'Buổi học không thuộc lớp này.' });
+        }
+
+        // Lấy thông tin buổi học
+        const lesson = await db.Lesson.findByPk(lessonId, {
+            attributes: ['id', 'lessonDate', 'lessonContent', 'totalTaskLength', 'homeworkList']
+        });
+
+        if (!lesson) {
+            return res.status(404).json({ message: 'Không tìm thấy buổi học.' });
+        }
+
+        return res.status(200).json(lesson);
+    } catch (error) {
+        console.error('getLessonInfo error:', error);
+        return res.status(500).json({ message: 'Lỗi khi lấy thông tin buổi học.' });
+    }
+};
+
 module.exports = {
     getAssistantInfo: getAssistantInfo,
+    createAssistant: createAssistant,
     postClassAssistantCRUD: postClassAssistantCRUD,
     postAssistantDeleteCRUD: postAssistantDeleteCRUD,
     postDeleteClassAssistantCRUD: postDeleteClassAssistantCRUD,
@@ -404,4 +551,6 @@ module.exports = {
     postSaveStudentPerformance: postSaveStudentPerformance,
     getLessonHomeworkList: getLessonHomeworkList,
     updateLessonHomeworkList: updateLessonHomeworkList,
+    updateLessonContent: updateLessonContent,
+    getLessonInfo: getLessonInfo
 }

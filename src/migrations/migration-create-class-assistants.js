@@ -19,7 +19,7 @@ module.exports = {
         type: Sequelize.INTEGER,
         references: {
           model: 'Assistants',
-          key: 'id'
+          key: 'userId'
         },
         onDelete: 'CASCADE',
         primaryKey: true

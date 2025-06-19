@@ -2,43 +2,36 @@
 const { Model } = require('sequelize');
 module.exports = (sequelize, DataTypes) => {
     class Assistant extends Model {
-        /**
-         * Helper method for defining associations.
-         */
         static associate(models) {
+            Assistant.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
+            // Thêm quan hệ nhiều–nhiều với Class
             Assistant.belongsToMany(models.Class, {
-                through: 'Class_Assistant',
+                through: models.Class_Assistant,
                 foreignKey: 'assistantId',
                 otherKey: 'classId',
                 as: 'classes'
             });
         }
     }
-    Assistant.init({
-        fullName: {
-            type: DataTypes.STRING,
-            allowNull: false
+    Assistant.init(
+        {
+            userId: {
+                type: DataTypes.INTEGER,
+                primaryKey: true,
+                allowNull: false,
+                references: { model: 'Users', key: 'userId' },
+                onUpdate: 'CASCADE',
+                onDelete: 'CASCADE',
+            },
+            fullName: { type: DataTypes.STRING, allowNull: false },
+            phoneNumber: { type: DataTypes.STRING },
         },
-        email: {
-            type: DataTypes.STRING,
-            allowNull: false,
-            unique: true,
-            validate: {
-                isEmail: true
-            }
-        },
-        phoneNumber: {
-            type: DataTypes.STRING,
-            allowNull: false
-        },
-        password: {
-            type: DataTypes.STRING,
-            allowNull: false
+        {
+            sequelize,
+            modelName: 'Assistant',
+            tableName: 'Assistants',
+            timestamps: true
         }
-    }, {
-        sequelize,
-        modelName: 'Assistant',
-        tableName: 'Assistants'
-    });
+    );
     return Assistant;
 };

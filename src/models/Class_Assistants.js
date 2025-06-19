@@ -1,4 +1,3 @@
-
 'use strict';
 const { Model } = require('sequelize');
 module.exports = (sequelize, DataTypes) => {
@@ -7,7 +6,7 @@ module.exports = (sequelize, DataTypes) => {
          * Helper method for defining associations.
          */
         static associate(models) {
-            // Định nghĩa thêm nếu cần
+            // Định nghĩa quan hệ nhiều–nhiều ở phía Class và Assistant
         }
     }
     Class_Assistant.init({
@@ -25,7 +24,7 @@ module.exports = (sequelize, DataTypes) => {
             allowNull: false,
             references: {
                 model: 'Assistants',
-                key: 'id'
+                key: 'userId'
             },
             onDelete: 'CASCADE'
         }
@@ -33,7 +32,7 @@ module.exports = (sequelize, DataTypes) => {
         sequelize,
         modelName: 'Class_Assistant',
         tableName: 'Class_Assistants',
-        timestamps: true
+        timestamps: false
     });
     return Class_Assistant;
 };

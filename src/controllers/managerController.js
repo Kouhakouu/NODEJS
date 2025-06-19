@@ -1,113 +1,199 @@
-import db from '../models/index';
-import CRUDservice from '../services/CRUDservice';
+// controllers/managerController.js
 
-let getManagerInfo = async (req, res) => {
+const bcrypt = require('bcryptjs');
+const db = require('../models');
+
+// Lấy thông tin tất cả các manager kèm email từ User
+
+const getManagerInfo = async (req, res) => {
     try {
-        let managers = await db.Manager.findAll({
-            attributes: ['id', 'fullName', 'email', 'phoneNumber', 'gradeLevel'],
+        const managers = await db.Manager.findAll({
+            attributes: ['userId', 'fullName', 'phoneNumber', 'gradeLevel'],
+            include: [{
+                model: db.User,
+                as: 'user',
+                attributes: ['email']
+            }]
         });
-        res.json(managers);
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ error: 'Internal server error' });
+
+        const result = managers.map(m => ({
+            userId: m.userId,
+            fullName: m.fullName,
+            phoneNumber: m.phoneNumber,
+            gradeLevel: m.gradeLevel,
+            email: m.user?.email || null
+        }));
+
+        return res.status(200).json(result);
+    } catch (error) {
+        console.error('getManagerInfo error:', error);
+        return res.status(500).json({ error: 'Internal server error' });
     }
 };
 
-let updateManager = async (req, res) => {
+// Tạo mới Manager (User + Manager profile)
+const createManager = async (req, res) => {
     try {
-        const managerId = req.params.id;
-        // Lưu ý: thêm gradeLevel vì Manager có thuộc tính này
         const { fullName, email, phoneNumber, password, gradeLevel } = req.body;
-
-        const updatedManager = await CRUDservice.updateManagerData(managerId, {
-            fullName,
-            email,
-            phoneNumber,
-            password,
-            gradeLevel,
-        });
-
-        res.json({
-            message: 'Manager updated successfully!',
-            manager: updatedManager,
-        });
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ error: e.message || 'Internal server error' });
-    }
-};
-
-let deleteManager = async (req, res) => {
-    try {
-        const managerId = req.params.id;
-        await CRUDservice.deleteManagerData(managerId);
-        res.json({ message: 'Manager deleted successfully!' });
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ error: e.message || 'Internal server error' });
-    }
-};
-
-//trang quản lý
-
-const getManagerClasses = async (req, res) => {
-    try {
-        const managerId = req.user.id; // Lấy ID của quản lý từ token
-
-        // Tìm gradeLevel của Manager
-        let manager = await db.Manager.findByPk(managerId, {
-            attributes: ['gradeLevel']
-        });
-
-        if (!manager) {
-            return res.status(404).json({ message: 'Manager not found' });
+        if (!fullName || !email || !password || !gradeLevel) {
+            return res.status(400).json({ message: 'Vui lòng nhập đầy đủ thông tin.' });
         }
 
-        // Tìm các lớp có gradeLevel trùng với gradeLevel của Manager và lấy thông tin lịch học
-        let classes = await db.Class.findAll({
+        const hashed = await bcrypt.hash(password, 10);
+        const user = await db.User.create({
+            email,
+            password: hashed,
+            roleId: 3 // roleId của Manager
+        });
+
+        const manager = await db.Manager.create({
+            userId: user.userId,
+            fullName,
+            phoneNumber,
+            gradeLevel
+        });
+
+        return res.status(201).json({
+            message: 'Tạo quản lý thành công!',
+            manager: {
+                userId: manager.userId,
+                fullName: manager.fullName,
+                phoneNumber: manager.phoneNumber,
+                gradeLevel: manager.gradeLevel,
+                email: user.email
+            }
+        });
+    } catch (error) {
+        console.error('createManager error:', error);
+        return res.status(500).json({ error: error.message || 'Internal server error' });
+    }
+};
+
+// Cập nhật Manager và User kèm gradeLevel
+const updateManager = async (req, res) => {
+    try {
+        const managerId = parseInt(req.params.id, 10);
+        const { fullName, email, phoneNumber, password, gradeLevel } = req.body;
+
+        const manager = await db.Manager.findByPk(managerId);
+        if (!manager) return res.status(404).json({ message: 'Manager not found.' });
+
+        const user = await db.User.findByPk(managerId);
+        if (!user) return res.status(404).json({ message: 'User not found.' });
+
+        if (email) user.email = email;
+        if (password) user.password = await bcrypt.hash(password, 10);
+        await user.save();
+
+        if (fullName) manager.fullName = fullName;
+        if (phoneNumber) manager.phoneNumber = phoneNumber;
+        if (gradeLevel) manager.gradeLevel = gradeLevel;
+        await manager.save();
+
+        return res.status(200).json({
+            message: 'Cập nhật quản lý thành công!',
+            manager: {
+                userId: manager.userId,
+                fullName: manager.fullName,
+                phoneNumber: manager.phoneNumber,
+                gradeLevel: manager.gradeLevel,
+                email: user.email
+            }
+        });
+    } catch (error) {
+        console.error('updateManager error:', error);
+        return res.status(500).json({ error: error.message || 'Internal server error' });
+    }
+};
+
+// Xóa Manager (thực chất xóa User, cascade sẽ xóa Manager)
+const deleteManager = async (req, res) => {
+    try {
+        const managerId = parseInt(req.params.id, 10);
+        const deleted = await db.User.destroy({ where: { userId: managerId } });
+        if (!deleted) return res.status(404).json({ message: 'Manager/User not found.' });
+        return res.status(200).json({ message: 'Xóa quản lý thành công!' });
+    } catch (error) {
+        console.error('deleteManager error:', error);
+        return res.status(500).json({ error: error.message || 'Internal server error' });
+    }
+};
+
+// Lấy danh sách lớp theo gradeLevel của Manager (trang quản lý)
+const getManagerClasses = async (req, res) => {
+    try {
+        const managerId = req.user.userId;
+        const manager = await db.Manager.findByPk(managerId, {
+            attributes: ['gradeLevel']
+        });
+        if (!manager) return res.status(404).json({ message: 'Manager not found' });
+
+        const classes = await db.Class.findAll({
             where: { gradeLevel: manager.gradeLevel },
-            attributes: ['id', 'className', 'gradeLevel', 'class_schedule_id'],
+            attributes: [
+                'id',
+                'className',
+                'gradeLevel',
+                [db.sequelize.fn('COUNT', db.sequelize.col('students.id')), 'studentsCount'],
+                'class_schedule_id'
+            ],
             include: [
                 {
                     model: db.ClassSchedule,
                     as: 'classSchedule',
-                    attributes: ['study_day', 'start_time', 'end_time']
+                    attributes: ['id', 'study_day', 'start_time', 'end_time']
+                },
+                {
+                    model: db.Student,
+                    as: 'students',
+                    attributes: [],
+                    through: { attributes: [] }
                 }
+            ],
+            group: [
+                'Class.id',
+                'Class.className',
+                'Class.gradeLevel',
+                'Class.class_schedule_id',
+                'classSchedule.id',
+                'classSchedule.study_day',
+                'classSchedule.start_time',
+                'classSchedule.end_time'
             ]
         });
 
-        return res.status(200).json(classes);
-    } catch (e) {
-        console.error(e);
+        const result = classes.map(c => ({
+            id: c.id,
+            className: c.className,
+            gradeLevel: c.gradeLevel,
+            studentsCount: parseInt(c.get('studentsCount'), 10),
+            classSchedule: c.classSchedule
+        }));
+
+        return res.status(200).json(result);
+    } catch (error) {
+        console.error('getManagerClasses error:', error);
         return res.status(500).json({ message: 'Error fetching manager classes' });
     }
 };
 
+// Tạo buổi học cho Manager
 const createLesson = async (req, res) => {
     try {
-        // Lấy dữ liệu lessonDate và classId từ req.body
         const { lessonDate, classId } = req.body;
-
-        // Kiểm tra các trường bắt buộc
         if (!lessonDate || !classId) {
             return res.status(400).json({ message: 'lessonDate và classId là bắt buộc' });
         }
 
-        // Tạo mới một bản ghi trong bảng Lesson
-        let newLesson = await db.Lesson.create({
-            lessonContent: '', // để trống
-            totalTaskLength: '', // để trống
-            lessonDate: lessonDate, // do người dùng nhập vào
-            createdAt: new Date(),
-            updatedAt: new Date(),
+        const newLesson = await db.Lesson.create({
+            lessonContent: '',
+            totalTaskLength: '',
+            lessonDate,
         });
 
-        // Thêm bản ghi vào bảng Lesson_Classes với lessonId vừa tạo và classId do người dùng chọn
-        let newLessonClass = await db.LessonClass.create({
+        const newLessonClass = await db.LessonClass.create({
             lessonId: newLesson.id,
-            classId: classId,
-            createdAt: new Date(),
-            updatedAt: new Date(),
+            classId
         });
 
         return res.status(201).json({
@@ -115,17 +201,54 @@ const createLesson = async (req, res) => {
             lesson: newLesson,
             lessonClass: newLessonClass
         });
-    } catch (e) {
-        console.error(e);
-        return res.status(500).json({ error: e.message || 'Internal server error' });
+    } catch (error) {
+        console.error('createLesson error:', error);
+        return res.status(500).json({ error: error.message || 'Internal server error' });
     }
 };
 
+const getClassStudents = async (req, res) => {
+    try {
+        const classId = parseInt(req.params.id, 10);
+        // Lấy lớp và include students qua quan hệ many-to-many
+        const cls = await db.Class.findByPk(classId, {
+            attributes: ['id', 'className'],
+            include: [{
+                model: db.Student,
+                as: 'students',
+                attributes: [
+                    'id',
+                    'fullName',
+                    'DOB',
+                    'school',
+                    'parentPhoneNumber',
+                    'parentEmail'
+                ],
+                through: { attributes: [] }
+            }]
+        });
+
+        if (!cls) {
+            return res.status(404).json({ message: 'Class not found' });
+        }
+
+        return res.status(200).json({
+            id: cls.id,
+            className: cls.className,
+            students: cls.students
+        });
+    } catch (error) {
+        console.error('getClassStudents error:', error);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+};
 
 module.exports = {
     getManagerInfo,
+    createManager,
     updateManager,
     deleteManager,
     getManagerClasses,
-    createLesson
+    createLesson,
+    getClassStudents
 };

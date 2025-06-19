@@ -18,10 +18,10 @@ let initWebRoutes = (app) => {
     router.get("/manager-crud", homeController.getManagerCRUD);
     router.get("/assistant-crud", homeController.getAssistantCRUD);
 
-    router.post("/teacher-post-crud", homeController.postTeacherCRUD);
-    router.post("/class-post-crud", homeController.postClassCRUD);
-    router.post("/manager-post-crud", homeController.postManagerCRUD);
-    router.post("/assistant-post-crud", homeController.postAssistantCRUD);
+    router.post("/teacher-post-crud", teacherController.createTeacher);
+    router.post("/class-post-crud", classController.createClass);
+    router.post("/manager-post-crud", managerController.createManager);
+    router.post("/assistant-post-crud", assistantController.createAssistant);
     router.post("/schedule-post-crud", homeController.postScheduleCRUD);
 
     router.get("/get-teacher-info", teacherController.getTeacherInfo);
@@ -30,9 +30,9 @@ let initWebRoutes = (app) => {
     router.get("/get-manager-info", managerController.getManagerInfo);
     router.get("/get-assistant-info", assistantController.getAssistantInfo);
 
-    router.get("/class-update-crud/:id", homeController.getClassUpdateCRUD);
+    router.put("/class-update-crud/:id", classController.updateClass);
     router.post("/class-update-crud", homeController.postClassUpdateCRUD);
-    router.post("/class-delete-crud", homeController.postClassDeleteCRUD);
+    router.delete("/class-delete-crud", classController.deleteClass);
     router.post("/class-assistant-post-crud", assistantController.postClassAssistantCRUD);
     router.post("/delete-class-assistant-crud", assistantController.postDeleteClassAssistantCRUD);
     router.post("/assistant-delete-crud", assistantController.postAssistantDeleteCRUD);
@@ -58,6 +58,8 @@ let initWebRoutes = (app) => {
     //trang giáo viên
     router.get("/get-teacher-courses", authMiddleware, teacherController.getTeacherCourses);
     router.post("/create-course", authMiddleware, teacherController.createCourse);
+    router.get('/teacher/classes', authMiddleware, teacherController.getTeacherClasses);
+    router.get('/teacher/classes/:id', authMiddleware, teacherController.getClassStudents);
 
     //trang trợ giảng
     router.get('/assistant/classes', authMiddleware, assistantController.getAssistantClasses);
@@ -70,12 +72,16 @@ let initWebRoutes = (app) => {
     );
     router.get('/lessons/:lessonId/homeworklist', assistantController.getLessonHomeworkList);
     router.post('/lessons/:lessonId/homeworklist', assistantController.updateLessonHomeworkList);
+    router.put('/assistant/classes/:classId/lessons/:lessonId', authMiddleware, assistantController.updateLessonContent);
+    router.get('/assistant/classes/:id/lessons/:lessonId', authMiddleware, assistantController.getLessonInfo);
+
     //trang quản lý
     router.get('/manager/classes', authMiddleware, managerController.getManagerClasses);
     router.get('/manager/students/:id', assistantController.getClassStudentDetail);
     router.post('/createLesson', managerController.createLesson);
     router.get('/manager/classes/:id/lessons', assistantController.getAssistantLessons);
     router.get('/manager/classes/:id/lessons/:lessonId/students-performance', assistantController.getLessonStudentsPerformance);
+    router.get('/students/:id', authMiddleware, managerController.getClassStudents);
 
     return app.use("/", router);
 };

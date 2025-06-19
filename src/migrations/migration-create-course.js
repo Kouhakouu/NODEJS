@@ -22,7 +22,7 @@ module.exports = {
                 allowNull: false,
                 references: {
                     model: "teachers", // Bảng teachers
-                    key: "id",
+                    key: "userId", // Khóa chính trong bảng teachers
                 },
                 onDelete: "CASCADE",
             },
