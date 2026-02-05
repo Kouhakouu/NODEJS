@@ -238,7 +238,7 @@ const getAssistantLessons = async (req, res) => {
                 {
                     model: db.Lesson,
                     as: 'lessons',
-                    attributes: ['id', 'lessonContent', 'totalTaskLength', 'lessonDate'],
+                    attributes: ['id', 'lessonContent', 'totalTaskLength', 'lessonDate', 'isLocked'],
                 }
             ]
         });
@@ -352,6 +352,12 @@ const getLessonStudentsPerformance = async (req, res) => {
 
 const postSaveStudentPerformance = async (req, res) => {
     const { studentId, lessonId, performance } = req.body;
+
+    const checkLesson = await db.Lesson.findByPk(lessonId);
+    if (checkLesson && checkLesson.isLocked) {
+        return res.status(403).json({ message: 'Buổi học đã bị chốt kết quả, không thể chỉnh sửa điểm số!' });
+    }
+
     if (!studentId || !lessonId || !performance) {
         return res.status(400).json({ message: 'Student ID, Lesson ID và dữ liệu performance là bắt buộc.' });
     }
@@ -442,12 +448,17 @@ const getLessonHomeworkList = async (req, res) => {
 const updateLessonHomeworkList = async (req, res) => {
     try {
         const lessonId = parseInt(req.params.lessonId, 10);
+
+        const lesson = await db.Lesson.findByPk(lessonId);
+        if (lesson && lesson.isLocked) {
+            return res.status(403).json({ message: 'Buổi học đã bị chốt, không thể thay đổi danh sách bài tập!' });
+        }
+
         const { homeworkList } = req.body;
         if (typeof homeworkList !== "string") {
             return res.status(400).json({ message: 'Homework list must be provided as a string.' });
         }
 
-        const lesson = await db.Lesson.findByPk(lessonId);
         if (!lesson) {
             return res.status(404).json({ message: 'Lesson not found' });
         }
@@ -469,6 +480,12 @@ const updateLessonContent = async (req, res) => {
     try {
         const classId = parseInt(req.params.classId, 10);
         const lessonId = parseInt(req.params.lessonId, 10);
+
+        const lesson = await db.Lesson.findByPk(lessonId);
+        if (lesson && lesson.isLocked) {
+            return res.status(403).json({ message: 'Buổi học đã bị chốt, không thể thay đổi nội dung buổi học!' });
+        }
+
         const { lessonContent } = req.body;
 
         if (!lessonContent || lessonContent.trim() === '') {
@@ -476,7 +493,6 @@ const updateLessonContent = async (req, res) => {
         }
 
         // Kiểm tra buổi học có tồn tại
-        const lesson = await db.Lesson.findByPk(lessonId);
         if (!lesson) {
             return res.status(404).json({ message: 'Buổi học không tồn tại.' });
         }
@@ -523,7 +539,7 @@ const getLessonInfo = async (req, res) => {
 
         // Lấy thông tin buổi học
         const lesson = await db.Lesson.findByPk(lessonId, {
-            attributes: ['id', 'lessonDate', 'lessonContent', 'totalTaskLength', 'homeworkList']
+            attributes: ['id', 'lessonDate', 'lessonContent', 'totalTaskLength', 'homeworkList', 'isLocked']
         });
 
         if (!lesson) {
@@ -534,6 +550,63 @@ const getLessonInfo = async (req, res) => {
     } catch (error) {
         console.error('getLessonInfo error:', error);
         return res.status(500).json({ message: 'Lỗi khi lấy thông tin buổi học.' });
+    }
+};
+
+const updateStudentAttendance = async (req, res) => {
+    try {
+        const lessonId = parseInt(req.params.lessonId, 10);
+        const studentId = parseInt(req.params.studentId, 10);
+
+        const lesson = await db.Lesson.findByPk(lessonId);
+        if (lesson && lesson.isLocked) {
+            return res.status(403).json({ message: 'Buổi học đã bị chốt, không thể thay đổi trạng thái điểm danh!' });
+        }
+
+        const { attendance } = req.body; // Giá trị boolean gửi từ frontend
+
+        // Sử dụng upsert để: Cập nhật nếu đã có dòng này, Tạo mới nếu chưa có
+        await db.LessonStudent.upsert({
+            lessonId: lessonId,
+            studentId: studentId,
+            attendance: attendance
+        });
+
+        return res.status(200).json({ message: 'Cập nhật điểm danh thành công' });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ message: 'Lỗi khi cập nhật điểm danh' });
+    }
+};
+
+const updateHomeworkList = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const lesson = await db.Lesson.findByPk(id);
+        if (lesson && lesson.isLocked) {
+            return res.status(403).json({ message: 'Buổi học đã bị chốt, không thể thay đổi danh sách bài tập!' });
+        }
+
+        const { homeworkList } = req.body;
+        const tasks = homeworkList ? homeworkList.split(',').filter(item => item.trim() !== '') : [];
+        const calculatedLength = tasks.length;
+
+        // Cập nhật vào Database
+        await db.Lesson.update(
+            {
+                homeworkList: homeworkList,
+                totalTaskLength: calculatedLength // Tự động cập nhật số lượng
+            },
+            { where: { id } }
+        );
+
+        return res.status(200).json({
+            message: 'Cập nhật thành công',
+            totalTaskLength: calculatedLength
+        });
+    } catch (error) {
+        return res.status(500).json({ message: error.message });
     }
 };
 
@@ -552,5 +625,7 @@ module.exports = {
     getLessonHomeworkList: getLessonHomeworkList,
     updateLessonHomeworkList: updateLessonHomeworkList,
     updateLessonContent: updateLessonContent,
-    getLessonInfo: getLessonInfo
+    getLessonInfo: getLessonInfo,
+    updateStudentAttendance: updateStudentAttendance,
+    updateHomeworkList: updateHomeworkList
 }

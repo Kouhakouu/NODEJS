@@ -32,7 +32,7 @@ let initWebRoutes = (app) => {
 
     router.put("/class-update-crud/:id", classController.updateClass);
     router.post("/class-update-crud", homeController.postClassUpdateCRUD);
-    router.delete("/class-delete-crud", classController.deleteClass);
+    router.delete("/class-delete-crud/:id", classController.deleteClass);
     router.post("/class-assistant-post-crud", assistantController.postClassAssistantCRUD);
     router.post("/delete-class-assistant-crud", assistantController.postDeleteClassAssistantCRUD);
     router.post("/assistant-delete-crud", assistantController.postAssistantDeleteCRUD);
@@ -74,6 +74,7 @@ let initWebRoutes = (app) => {
     router.post('/lessons/:lessonId/homeworklist', assistantController.updateLessonHomeworkList);
     router.put('/assistant/classes/:classId/lessons/:lessonId', authMiddleware, assistantController.updateLessonContent);
     router.get('/assistant/classes/:id/lessons/:lessonId', authMiddleware, assistantController.getLessonInfo);
+    router.put('/assistant/lessons/:lessonId/students/:studentId/attendance', assistantController.updateStudentAttendance);
 
     //trang quản lý
     router.get('/manager/classes', authMiddleware, managerController.getManagerClasses);
@@ -82,6 +83,14 @@ let initWebRoutes = (app) => {
     router.get('/manager/classes/:id/lessons', assistantController.getAssistantLessons);
     router.get('/manager/classes/:id/lessons/:lessonId/students-performance', assistantController.getLessonStudentsPerformance);
     router.get('/students/:id', authMiddleware, managerController.getClassStudents);
+    router.put('/manager/lessons/:lessonId/students/:studentId/attendance', managerController.updateStudentAttendance);
+    router.get('/manager/classes/:classId/lessons/:lessonId', managerController.getLessonDetail);
+    router.put('/manager/lessons/:lessonId/lock', managerController.toggleLessonLock);
+    router.post(
+        "/manager/classes/:classId/lessons/:lessonId/send-results-emails",
+        authMiddleware,
+        managerController.sendLessonResultsEmails
+    );
 
     return app.use("/", router);
 };

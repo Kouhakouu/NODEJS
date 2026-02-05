@@ -1,10 +1,9 @@
-// controllers/managerController.js
-
 const bcrypt = require('bcryptjs');
 const db = require('../models');
+const { safeStr, formatDateVN, jsonToText } = require("../utils/emailHelpers");
+const { sendLessonResultEmail } = require("../services/emailService");
 
 // Lấy thông tin tất cả các manager kèm email từ User
-
 const getManagerInfo = async (req, res) => {
     try {
         const managers = await db.Manager.findAll({
@@ -243,6 +242,257 @@ const getClassStudents = async (req, res) => {
     }
 };
 
+//Điểm danh
+const updateStudentAttendance = async (req, res) => {
+    try {
+        const lessonId = parseInt(req.params.lessonId, 10);
+        const studentId = parseInt(req.params.studentId, 10);
+        const { attendance } = req.body; // true/false
+
+        // Dùng upsert giống như bên assistant để đảm bảo dữ liệu được cập nhật hoặc tạo mới
+        await db.LessonStudent.upsert({
+            lessonId: lessonId,
+            studentId: studentId,
+            attendance: attendance
+        });
+
+        return res.status(200).json({ message: 'Cập nhật điểm danh thành công' });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ message: 'Lỗi server khi cập nhật điểm danh' });
+    }
+};
+
+//Lấy thông tin buổi học
+const getLessonDetail = async (req, res) => {
+    try {
+        const lessonId = parseInt(req.params.lessonId, 10);
+        const classId = parseInt(req.params.classId, 10); // Lấy classId từ URL
+
+        // 1. Lấy thông tin lớp học (để lấy className - VD: 9D0A)
+        const classInfo = await db.Class.findByPk(classId, {
+            attributes: ['className'] // Chỉ cần lấy tên lớp
+        });
+
+        // 2. Lấy thông tin buổi học HIỆN TẠI
+        const currentLesson = await db.Lesson.findByPk(lessonId);
+
+        if (!currentLesson) {
+            return res.status(404).json({ message: 'Lesson not found' });
+        }
+
+        // 3. Tìm buổi học TRƯỚC ĐÓ của lớp này (để lấy nội dung và số bài tập cũ)
+        // Query này dựa trên logic: Cùng classId, ngày học nhỏ hơn ngày hiện tại, lấy ngày gần nhất
+        const previousLesson = await db.Lesson.findOne({
+            include: [{
+                model: db.Class,
+                where: { id: classId }, // Quan trọng: Phải thuộc lớp này
+                attributes: [],
+                through: { attributes: [] }
+            }],
+            where: {
+                lessonDate: {
+                    [db.Sequelize.Op.lt]: currentLesson.lessonDate // Ngày nhỏ hơn ngày hiện tại
+                }
+            },
+            order: [['lessonDate', 'DESC']], // Lấy bài mới nhất trong quá khứ
+        });
+
+        // 4. Chuẩn bị dữ liệu buổi trước
+        const prevData = previousLesson ? {
+            content: previousLesson.lessonContent,
+            homeworkCount: previousLesson.totalTaskLength
+        } : {
+            content: 'Không có buổi học trước',
+            homeworkCount: 0
+        };
+
+        // 5. Trả về kết quả gộp
+        return res.status(200).json({
+            id: currentLesson.id,
+            className: classInfo ? classInfo.className : `Lớp ${classId}`, // <--- TRẢ VỀ TÊN LỚP TẠI ĐÂY
+            lessonContent: currentLesson.lessonContent,
+            lessonDate: currentLesson.lessonDate,
+            totalTaskLength: currentLesson.totalTaskLength,
+            isLocked: Boolean(currentLesson.isLocked),
+
+            // Thông tin buổi trước
+            previousLessonContent: prevData.content,
+            previousHomeworkCount: prevData.homeworkCount
+        });
+
+    } catch (error) {
+        console.error('getLessonDetail error:', error);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+//Chốt kết quả buổi học
+const toggleLessonLock = async (req, res) => {
+    try {
+        const { lessonId } = req.params;
+        const lesson = await db.Lesson.findByPk(lessonId);
+
+        if (!lesson) {
+            return res.status(404).json({ message: 'Lesson not found' });
+        }
+
+        // Đảo ngược trạng thái hiện tại (True -> False, False -> True)
+        const newStatus = !lesson.isLocked;
+
+        await lesson.update({ isLocked: newStatus });
+
+        return res.status(200).json({
+            message: newStatus ? 'Đã chốt kết quả buổi học' : 'Đã mở khóa buổi học',
+            isLocked: newStatus
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'Lỗi server' });
+    }
+};
+
+// POST /manager/classes/:classId/lessons/:lessonId/send-results-emails
+const sendLessonResultsEmails = async (req, res) => {
+    try {
+        const classId = parseInt(req.params.classId, 10);
+        const lessonId = parseInt(req.params.lessonId, 10);
+
+        // 1) Lấy lesson + check locked
+        const lesson = await db.Lesson.findByPk(lessonId);
+        if (!lesson) return res.status(404).json({ message: "Lesson not found" });
+
+        if (!lesson.isLocked) {
+            return res.status(400).json({
+                message: "Buổi học chưa chốt (isLocked=false), không thể gửi email.",
+            });
+        }
+
+        // 2) Lấy className + students (reuse logic getClassStudents)
+        const cls = await db.Class.findByPk(classId, {
+            attributes: ["id", "className"],
+            include: [{
+                model: db.Student,
+                as: "students",
+                attributes: ["id", "fullName", "parentEmail"],
+                through: { attributes: [] }
+            }]
+        });
+
+        if (!cls) return res.status(404).json({ message: "Class not found" });
+
+        const students = cls.students || [];
+
+        // 3) Lấy previous lesson của class (reuse logic getLessonDetail)
+        const previousLesson = await db.Lesson.findOne({
+            include: [{
+                model: db.Class,
+                where: { id: classId },
+                attributes: [],
+                through: { attributes: [] }
+            }],
+            where: {
+                lessonDate: { [db.Sequelize.Op.lt]: lesson.lessonDate }
+            },
+            order: [["lessonDate", "DESC"]],
+        });
+
+        const previousLessonContent = previousLesson?.lessonContent || "Không có buổi học trước";
+        const previousHomeworkCount = previousLesson?.totalTaskLength ?? 0;
+
+        // 4) Attendance map từ LessonStudent
+        const attendanceRows = await db.LessonStudent.findAll({
+            where: { lessonId },
+            attributes: ["studentId", "attendance"]
+        });
+        const attendanceMap = new Map(attendanceRows.map(r => [r.studentId, r.attendance]));
+
+        // 5) Performance rows cho lessonId: dùng SQL raw để không phụ thuộc association
+        const [perfRows] = await db.sequelize.query(
+            `
+  SELECT
+    sp.id,
+    sp.doneTask,
+    sp.totalScore,
+    sp.incorrectTasks,
+    sp.missingTasks,
+    sp.presentation,
+    sp.skills,
+    sp.comment,
+    sps.studentId
+  FROM StudentPerformances sp
+  INNER JOIN StudentPerformance_Lessons spl
+    ON spl.studentPerformanceId = sp.id
+  INNER JOIN StudentPerformance_Students sps
+    ON sps.studentPerformanceId = sp.id
+  WHERE spl.lessonId = :lessonId
+  ORDER BY sp.id DESC
+  `,
+            { replacements: { lessonId } }
+        );
+
+        // Map performance mới nhất theo studentId
+        const perfByStudentId = new Map();
+        for (const row of perfRows) {
+            if (!perfByStudentId.has(row.studentId)) {
+                perfByStudentId.set(row.studentId, row); // do ORDER BY id DESC
+            }
+        }
+
+        // 6) Send mails
+        const subject = "[CMATH EDUCATION] ĐÁNH GIÁ KẾT QUẢ HỌC TẬP";
+
+        let sent = 0, failed = 0, skippedNoEmail = 0;
+        const errors = [];
+
+        for (const s of students) {
+            const to = s.parentEmail;
+            if (!to) { skippedNoEmail++; continue; }
+
+            const perf = perfByStudentId.get(s.id) || null;
+            const attendance = attendanceMap.has(s.id) ? attendanceMap.get(s.id) : true;
+
+            const data = {
+                mail: to,
+                name: safeStr(s.fullName, "-"),
+                day: formatDateVN(lesson.lessonDate),
+                class: safeStr(cls.className, `Lớp ${classId}`),
+                content: safeStr(lesson.lessonContent, "Chưa cập nhật"),
+                comment: safeStr(perf?.comment, "-"),
+
+                previousContent: safeStr(previousLessonContent, "-"),
+                totalTaskLength: safeStr(lesson.totalTaskLength ?? 0, "0"),
+                doneTask: safeStr(perf?.doneTask, "N/A"),
+                totalScore: safeStr(perf?.totalScore, "N/A"),
+                inCorrectTasks: jsonToText(perf?.incorrectTasks),
+                missingTasks: jsonToText(perf?.missingTasks),
+                presentation: safeStr(perf?.presentation, "-"),
+                skills: safeStr(perf?.skills, "-"),
+
+                // nếu bạn muốn add vào hbs:
+                // attendance: attendance ? "Có mặt" : "Vắng"
+            };
+
+            try {
+                await sendLessonResultEmail({ to, subject, data });
+                sent++;
+            } catch (e) {
+                failed++;
+                errors.push({ studentId: s.id, email: to, error: e.message });
+            }
+        }
+
+        return res.status(200).json({
+            message: "Đã xử lý gửi email kết quả buổi học.",
+            stats: { sent, failed, skippedNoEmail },
+            errors,
+        });
+    } catch (error) {
+        console.error("sendLessonResultsEmails error:", error);
+        return res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+};
+
 module.exports = {
     getManagerInfo,
     createManager,
@@ -250,5 +500,9 @@ module.exports = {
     deleteManager,
     getManagerClasses,
     createLesson,
-    getClassStudents
+    getClassStudents,
+    updateStudentAttendance,
+    getLessonDetail,
+    toggleLessonLock,
+    sendLessonResultsEmails
 };

@@ -1,24 +1,21 @@
 'use strict';
 const { Model } = require('sequelize');
+
 module.exports = (sequelize, DataTypes) => {
     class Lesson extends Model {
         static associate(models) {
-            // Lesson có quan hệ N-N với Student thông qua LessonStudent
             Lesson.belongsToMany(models.Student, {
                 through: models.LessonStudent,
                 foreignKey: 'lessonId'
             });
-            // Lesson có quan hệ N-N với Class thông qua LessonClass
             Lesson.belongsToMany(models.Class, {
                 through: models.LessonClass,
                 foreignKey: 'lessonId'
             });
-            // Lesson có quan hệ N-N với ClassSchedule thông qua LessonClassSchedules
             Lesson.belongsToMany(models.ClassSchedule, {
                 through: models.LessonClassSchedules,
                 foreignKey: 'lessonId'
             });
-            // Lesson có quan hệ N-N với StudentPerformance thông qua StudentPerformanceLesson
             Lesson.belongsToMany(models.StudentPerformance, {
                 through: models.StudentPerformanceLesson,
                 foreignKey: 'lessonId'
@@ -41,18 +38,41 @@ module.exports = (sequelize, DataTypes) => {
         },
         totalTaskLength: {
             type: DataTypes.INTEGER,
-            allowNull: false
+            allowNull: false,
+            defaultValue: 0 // Thêm mặc định là 0
         },
-        // Thêm cột homeworkList
         homeworkList: {
             type: DataTypes.STRING,
             allowNull: true
+        },
+        isLocked: {
+            type: DataTypes.BOOLEAN,
+            defaultValue: false // Mặc định là không khóa
         }
     }, {
         sequelize,
         modelName: 'Lesson',
         tableName: 'Lessons',
-        timestamps: true
+        timestamps: true,
+        // --- THÊM PHẦN HOOKS NÀY ---
+        hooks: {
+            beforeSave: (lesson) => {
+                // Kiểm tra xem homeworkList có thay đổi không hoặc có giá trị không
+                if (lesson.homeworkList) {
+                    // Tách chuỗi bằng dấu phẩy, lọc bỏ các phần tử rỗng và khoảng trắng
+                    const tasks = lesson.homeworkList
+                        .split(',')
+                        .map(item => item.trim())
+                        .filter(item => item !== '');
+
+                    // Gán số lượng đã đếm được vào totalTaskLength
+                    lesson.totalTaskLength = tasks.length;
+                } else {
+                    // Nếu không có danh sách bài tập thì gán bằng 0
+                    lesson.totalTaskLength = 0;
+                }
+            }
+        }
     });
     return Lesson;
 };
