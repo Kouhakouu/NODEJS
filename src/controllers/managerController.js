@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const db = require('../models');
 const { safeStr, formatDateVN, jsonToText } = require("../utils/emailHelpers");
-const { sendLessonResultEmail } = require("../services/emailService");
+const { sendLessonResultEmail, sendQuizSubmissionEmail } = require("../services/emailService");
 
 // Lấy thông tin tất cả các manager kèm email từ User
 const getManagerInfo = async (req, res) => {
@@ -493,6 +493,44 @@ const sendLessonResultsEmails = async (req, res) => {
     }
 };
 
+//trợ giảng test nội quy
+const submitQuizAnswers = async (req, res) => {
+    try {
+        const { fullName, contact, submittedAt, answers } = req.body || {};
+
+        if (!Array.isArray(answers) || answers.length === 0) {
+            return res.status(400).json({ message: "Invalid payload: answers is required." });
+        }
+
+        const to = process.env.QUIZ_TO_EMAIL; // email cố định nhận bài
+        if (!to) {
+            return res.status(500).json({ message: "Missing QUIZ_TO_EMAIL in env." });
+        }
+
+        const subject = process.env.QUIZ_SUBJECT || "[CMATH EDUCATION] Quiz nội quy - Submission";
+
+        const data = {
+            fullName: safeStr(fullName, "-"),
+            contact: safeStr(contact, "-"),
+            submittedAt: safeStr(submittedAt, new Date().toISOString()),
+            answers: answers.map((a, idx) => ({
+                no: idx + 1,
+                questionText: safeStr(a.questionText, ""),
+                chosenOptionId: safeStr(a.chosenOptionId, ""),
+                chosenOptionText: safeStr(a.chosenOptionText, ""),
+            })),
+        };
+
+        await sendQuizSubmissionEmail({ to, subject, data });
+
+        // Không trả kết quả đúng/sai. Chỉ báo ghi nhận.
+        return res.status(200).json({ message: "Recorded" });
+    } catch (error) {
+        console.error("submitQuizAnswers error:", error);
+        return res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+};
+
 module.exports = {
     getManagerInfo,
     createManager,
@@ -504,5 +542,6 @@ module.exports = {
     updateStudentAttendance,
     getLessonDetail,
     toggleLessonLock,
-    sendLessonResultsEmails
+    sendLessonResultsEmails,
+    submitQuizAnswers
 };

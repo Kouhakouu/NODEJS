@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>Quiz Submission</title>
+</head>
+
+<body style="font-family: Arial, sans-serif; line-height: 1.5;">
+    <h2>[CMATH EDUCATION] Quiz nội quy - Submission</h2>
+
+    <p><b>Thời gian nộp:</b> {{submittedAt}}</p>
+    <p><b>Họ tên:</b> {{fullName}}</p>
+    <p><b>Liên hệ:</b> {{contact}}</p>
+
+    <hr />
+
+    <h3>Đáp án đã chọn</h3>
+    <table cellpadding="8" cellspacing="0" border="1" style="border-collapse: collapse; width: 100%;">
+        <thead>
+            <tr>
+                <th style="width: 50px;">#</th>
+                <th>Câu hỏi</th>
+                <th>Đáp án chọn</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{#each answers}}
+            <tr>
+                <td>{{no}}</td>
+                <td>{{questionText}}</td>
+                <td>
+                    <div><b>({{chosenOptionId}})</b> {{chosenOptionText}}</div>
+                </td>
+            </tr>
+            {{/each}}
+        </tbody>
+    </table>
+</body>
+
+</html>

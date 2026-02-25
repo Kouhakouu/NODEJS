@@ -86,11 +86,8 @@ let initWebRoutes = (app) => {
     router.put('/manager/lessons/:lessonId/students/:studentId/attendance', managerController.updateStudentAttendance);
     router.get('/manager/classes/:classId/lessons/:lessonId', managerController.getLessonDetail);
     router.put('/manager/lessons/:lessonId/lock', managerController.toggleLessonLock);
-    router.post(
-        "/manager/classes/:classId/lessons/:lessonId/send-results-emails",
-        authMiddleware,
-        managerController.sendLessonResultsEmails
-    );
+    router.post('/manager/classes/:classId/lessons/:lessonId/send-results-emails', authMiddleware, managerController.sendLessonResultsEmails);
+    router.post('/manager/quiz/submit', managerController.submitQuizAnswers);
 
     return app.use("/", router);
 };

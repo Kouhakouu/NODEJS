@@ -4,15 +4,18 @@ const fs = require("fs");
 const path = require("path");
 const handlebars = require("handlebars");
 
-let cachedTemplate = null;
+// cache theo templateName
+const templateCache = new Map();
 
-function getTemplate() {
-    if (cachedTemplate) return cachedTemplate;
+function getTemplate(templateName) {
+    if (templateCache.has(templateName)) return templateCache.get(templateName);
 
-    const templatePath = path.join(__dirname, "..", "views", "lesson-result.hbs");
+    const templatePath = path.join(__dirname, "..", "views", `${templateName}.hbs`);
     const source = fs.readFileSync(templatePath, "utf8");
-    cachedTemplate = handlebars.compile(source);
-    return cachedTemplate;
+    const compiled = handlebars.compile(source);
+
+    templateCache.set(templateName, compiled);
+    return compiled;
 }
 
 function createTransporter() {
@@ -27,9 +30,9 @@ function createTransporter() {
     });
 }
 
-async function sendLessonResultEmail({ to, subject, data }) {
+async function sendTemplatedEmail({ to, subject, templateName, data }) {
     const transporter = createTransporter();
-    const template = getTemplate();
+    const template = getTemplate(templateName);
     const html = template(data);
 
     return transporter.sendMail({
@@ -40,4 +43,24 @@ async function sendLessonResultEmail({ to, subject, data }) {
     });
 }
 
-module.exports = { sendLessonResultEmail };
+// giữ nguyên function cũ (để code cũ không hỏng)
+async function sendLessonResultEmail({ to, subject, data }) {
+    return sendTemplatedEmail({
+        to,
+        subject,
+        templateName: "lesson-result",
+        data,
+    });
+}
+
+// function mới cho quiz
+async function sendQuizSubmissionEmail({ to, subject, data }) {
+    return sendTemplatedEmail({
+        to,
+        subject,
+        templateName: "quiz-submission",
+        data,
+    });
+}
+
+module.exports = { sendLessonResultEmail, sendQuizSubmissionEmail };
