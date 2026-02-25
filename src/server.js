@@ -16,7 +16,7 @@ app.get("/", (req, res) => {
 });
 
 app.use(cors({
-    origin: ["http://localhost:3000", "https://reactjs-rust-nu.vercel.app"],
+    origin: ["http://localhost:3000", "https://reactjs-cmath.vercel.app"],
     methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
 }));
