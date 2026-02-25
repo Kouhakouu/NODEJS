@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const db = require('../models');
 const { safeStr, formatDateVN, jsonToText } = require("../utils/emailHelpers");
-const { sendLessonResultEmail, sendQuizSubmissionEmail } = require("../services/emailService");
+const { sendLessonResultEmail, sendQuizSubmissionEmail, sendQuizResultEmail } = require("../services/emailService");
 
 // Lấy thông tin tất cả các manager kèm email từ User
 const getManagerInfo = async (req, res) => {
@@ -494,6 +494,34 @@ const sendLessonResultsEmails = async (req, res) => {
 };
 
 //trợ giảng test nội quy
+const QUIZ_ANSWER_KEY = {
+    q1: "c",
+    q2: "d",
+    q3: "b",
+    q4: "c",
+    q5: "b",
+    q6: "c",
+    q7: "b",
+    q8: "c",
+    q9: "a",
+    q10: "c",
+    q11: "b",
+    q12: "c",
+    q13: "b",
+    q14: "b",
+    q15: "b",
+    q16: "c",
+    q17: "c",
+    q18: "a",
+    q19: "b",
+    q20: "c",
+    q21: "d",
+    q22: "b",
+    q23: "b",
+};
+
+const isEmail = (s) => typeof s === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+
 const submitQuizAnswers = async (req, res) => {
     try {
         const { fullName, contact, submittedAt, answers } = req.body || {};
@@ -502,14 +530,15 @@ const submitQuizAnswers = async (req, res) => {
             return res.status(400).json({ message: "Invalid payload: answers is required." });
         }
 
-        const to = process.env.QUIZ_TO_EMAIL; // email cố định nhận bài
-        if (!to) {
+        // 1) mail quản lý (fixed)
+        const adminTo = process.env.QUIZ_TO_EMAIL;
+        if (!adminTo) {
             return res.status(500).json({ message: "Missing QUIZ_TO_EMAIL in env." });
         }
 
-        const subject = process.env.QUIZ_SUBJECT || "[CMATH EDUCATION] Quiz nội quy - Submission";
+        const subjectAdmin = process.env.QUIZ_SUBJECT || "[CMATH EDUCATION] Quiz nội quy - Submission";
 
-        const data = {
+        const submissionData = {
             fullName: safeStr(fullName, "-"),
             contact: safeStr(contact, "-"),
             submittedAt: safeStr(submittedAt, new Date().toISOString()),
@@ -521,10 +550,61 @@ const submitQuizAnswers = async (req, res) => {
             })),
         };
 
-        await sendQuizSubmissionEmail({ to, subject, data });
+        // 2) chấm điểm trên server (answer key)
+        const details = answers.map((a, idx) => {
+            const qid = safeStr(a.questionId, "");
+            const chosenId = safeStr(a.chosenOptionId, "");
+            const correctOptionId = QUIZ_ANSWER_KEY[qid]; // undefined nếu qid sai
+            const ok = Boolean(correctOptionId) && chosenId === correctOptionId;
 
-        // Không trả kết quả đúng/sai. Chỉ báo ghi nhận.
-        return res.status(200).json({ message: "Recorded" });
+            return {
+                no: idx + 1,
+                questionId: qid,
+                questionText: safeStr(a.questionText, ""),
+                chosenOptionId: chosenId,
+                chosenOptionText: safeStr(a.chosenOptionText, ""),
+                correctOptionId: correctOptionId || "?",
+                isCorrect: ok,
+            };
+        });
+
+        const totalCount = details.length;
+        const correctCount = details.reduce((acc, d) => acc + (d.isCorrect ? 1 : 0), 0);
+        const percent = totalCount ? Math.round((correctCount * 100) / totalCount) : 0;
+
+        const wrongAnswers = details.filter((d) => !d.isCorrect);
+
+        // 3) gửi mail cho user nếu contact là email
+        const userEmail = isEmail(contact) ? contact : null;
+        const subjectUser = process.env.QUIZ_RESULT_SUBJECT || "[CMATH EDUCATION] Kết quả Quiz nội quy";
+
+        const resultData = {
+            fullName: safeStr(fullName, "-"),
+            submittedAt: safeStr(submittedAt, new Date().toISOString()),
+            totalCount,
+            correctCount,
+            percent,
+            hasWrong: wrongAnswers.length > 0,
+            wrongAnswers,
+        };
+
+        // 4) send
+        // - Luôn gửi admin
+        // - Gửi user nếu có email hợp lệ
+        const tasks = [
+            sendQuizSubmissionEmail({ to: adminTo, subject: subjectAdmin, data: submissionData }),
+        ];
+
+        if (userEmail) {
+            tasks.push(sendQuizResultEmail({ to: userEmail, subject: subjectUser, data: resultData }));
+        }
+
+        await Promise.all(tasks);
+
+        return res.status(200).json({
+            message: "Recorded",
+            sentToUser: Boolean(userEmail),
+        });
     } catch (error) {
         console.error("submitQuizAnswers error:", error);
         return res.status(500).json({ message: "Internal server error", error: error.message });

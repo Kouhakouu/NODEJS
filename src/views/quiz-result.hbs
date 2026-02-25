@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>Kết quả Quiz</title>
+</head>
+
+<body style="font-family: Arial, sans-serif; line-height: 1.6;">
+    <h2>[CMATH EDUCATION] Kết quả Quiz nội quy</h2>
+
+    <p><b>Họ tên:</b> {{fullName}}</p>
+    <p><b>Thời gian nộp:</b> {{submittedAt}}</p>
+
+    <hr />
+
+    <h3>Tổng kết</h3>
+    <ul>
+        <li><b>Điểm:</b> {{correctCount}} / {{totalCount}} ({{percent}}%)</li>
+        <li><b>Kết quả:</b> {{#if isPass}}ĐẠT{{else}}CHƯA ĐẠT{{/if}} </li>
+    </ul>
+
+    {{#if hasWrong}}
+    <hr />
+    <h3>Các câu chưa đúng</h3>
+    <table cellpadding="8" cellspacing="0" border="1" style="border-collapse: collapse; width: 100%;">
+        <thead>
+            <tr>
+                <th style="width: 50px;">#</th>
+                <th>Câu hỏi</th>
+                <th>Bạn chọn</th>
+                <th>Đáp án đúng</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{#each wrongAnswers}}
+            <tr>
+                <td>{{no}}</td>
+                <td>{{questionText}}</td>
+                <td><b>({{chosenOptionId}})</b> {{chosenOptionText}}</td>
+                <td><b>{{correctOptionId}}</b></td>
+            </tr>
+            {{/each}}
+        </tbody>
+    </table>
+    {{else}}
+    <p><b>Bạn đã trả lời đúng tất cả câu hỏi. Chúc mừng!</b></p>
+    {{/if}}
+</body>
+
+</html>

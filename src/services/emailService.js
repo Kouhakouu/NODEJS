@@ -43,7 +43,6 @@ async function sendTemplatedEmail({ to, subject, templateName, data }) {
     });
 }
 
-// giữ nguyên function cũ (để code cũ không hỏng)
 async function sendLessonResultEmail({ to, subject, data }) {
     return sendTemplatedEmail({
         to,
@@ -53,7 +52,6 @@ async function sendLessonResultEmail({ to, subject, data }) {
     });
 }
 
-// function mới cho quiz
 async function sendQuizSubmissionEmail({ to, subject, data }) {
     return sendTemplatedEmail({
         to,
@@ -63,4 +61,13 @@ async function sendQuizSubmissionEmail({ to, subject, data }) {
     });
 }
 
-module.exports = { sendLessonResultEmail, sendQuizSubmissionEmail };
+async function sendQuizResultEmail({ to, subject, data }) {
+    return sendTemplatedEmail({
+        to,
+        subject,
+        templateName: "quiz-result",
+        data,
+    });
+}
+
+module.exports = { sendLessonResultEmail, sendQuizSubmissionEmail, sendQuizResultEmail };
