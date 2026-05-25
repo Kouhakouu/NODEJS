@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 import db from '../models/index';
 import CRUDservice from '../services/CRUDservice';
+import aiService from '../services/aiService';
 
 // Trang admin: lấy thông tin trợ giảng kèm lớp
 const getAssistantInfo = async (req, res) => {
@@ -258,25 +259,30 @@ const getLessonStudentsPerformance = async (req, res) => {
         const classId = parseInt(req.params.id, 10);
         const lessonId = parseInt(req.params.lessonId, 10);
 
-        // Lấy thông tin lớp và danh sách học sinh
-        const classDetail = await db.Class.findByPk(classId, {
-            include: [
-                {
-                    model: db.Student,
-                    as: 'students',
-                    attributes: ['id', 'fullName', 'school', 'parentPhoneNumber', 'parentEmail'],
-                    through: { attributes: [] }
-                }
-            ]
+        // Lấy danh sách học sinh từ snapshot trong Lesson_Students (tại thời điểm tạo buổi học)
+        const lessonStudentRows = await db.LessonStudent.findAll({
+            where: { lessonId }
         });
 
-        if (!classDetail) {
-            return res.status(404).json({ message: 'Class not found' });
+        if (lessonStudentRows.length === 0) {
+            return res.status(200).json([]);
         }
 
-        const studentIds = classDetail.students.map(student => student.id);
+        const studentIds = lessonStudentRows.map(ls => ls.studentId);
 
-        // Truy vấn StudentPerformance (được định nghĩa trong file studentPerformance.js)
+        // Lấy thông tin chi tiết học sinh
+        const students = await db.Student.findAll({
+            where: { id: { [db.Sequelize.Op.in]: studentIds } },
+            attributes: ['id', 'fullName', 'school', 'parentPhoneNumber', 'parentEmail']
+        });
+
+        // Map attendance theo studentId
+        const lessonStudentMap = {};
+        lessonStudentRows.forEach(ls => {
+            lessonStudentMap[ls.studentId] = ls;
+        });
+
+        // Truy vấn StudentPerformance cho buổi học này
         const performances = await db.StudentPerformance.findAll({
             include: [
                 {
@@ -294,34 +300,17 @@ const getLessonStudentsPerformance = async (req, res) => {
             ]
         });
 
-        // Xây dựng map theo studentId (giả sử mỗi performance chỉ liên quan đến 1 học sinh)
         const performanceMap = {};
         performances.forEach(perf => {
             if (perf.Students && perf.Students.length > 0) {
                 const studentId = perf.Students[0].id;
-                // Nếu có nhiều performance cho 1 học sinh, chỉ lấy bản ghi đầu tiên
                 if (!performanceMap[studentId]) {
                     performanceMap[studentId] = perf.toJSON();
                 }
             }
         });
 
-        // Truy vấn bảng LessonStudent cho lessonId và các học sinh liên quan
-        const lessonStudents = await db.LessonStudent.findAll({
-            where: {
-                lessonId,
-                studentId: { [db.Sequelize.Op.in]: studentIds }
-            }
-        });
-
-        // Tạo map từ lessonStudent theo studentId
-        const lessonStudentMap = {};
-        lessonStudents.forEach(ls => {
-            lessonStudentMap[ls.studentId] = ls;
-        });
-
-        // Ghép dữ liệu kết quả cho từng học sinh
-        const studentsWithPerformance = classDetail.students.map(student => {
+        const studentsWithPerformance = students.map(student => {
             const perf = performanceMap[student.id] || null;
             const ls = lessonStudentMap[student.id] || null;
             return {
@@ -610,6 +599,166 @@ const updateHomeworkList = async (req, res) => {
     }
 };
 
+const generateAiCommentForStudent = async (req, res) => {
+    try {
+        const lessonId = parseInt(req.params.lessonId, 10);
+        const studentId = parseInt(req.params.studentId, 10);
+
+        const lesson = await db.Lesson.findByPk(lessonId);
+        if (!lesson) {
+            return res.status(404).json({ message: 'Buổi học không tồn tại' });
+        }
+        if (lesson.isLocked) {
+            return res.status(403).json({ message: 'Buổi học đã bị chốt, không thể chỉnh sửa nhận xét.' });
+        }
+
+        const student = await db.Student.findByPk(studentId, { attributes: ['id', 'fullName'] });
+        if (!student) {
+            return res.status(404).json({ message: 'Học sinh không tồn tại' });
+        }
+
+        const performance = await db.StudentPerformance.findOne({
+            include: [
+                { model: db.Student, where: { id: studentId }, through: { attributes: [] } },
+                { model: db.Lesson, where: { id: lessonId }, through: { attributes: [] } }
+            ]
+        });
+        if (!performance) {
+            return res.status(404).json({ message: 'Học sinh này chưa có dữ liệu chấm bài cho buổi học, hãy ấn Submit trước.' });
+        }
+
+        const lessonStudent = await db.LessonStudent.findOne({ where: { lessonId, studentId } });
+
+        const comment = await aiService.generateComment({
+            totalTaskLength: lesson.totalTaskLength,
+            doneTask: performance.doneTask,
+            totalScore: performance.totalScore,
+            incorrectTasks: performance.incorrectTasks,
+            missingTasks: performance.missingTasks,
+            presentation: performance.presentation,
+            skills: performance.skills,
+            attendance: lessonStudent ? lessonStudent.attendance : false
+        });
+
+        await performance.update({ comment });
+
+        return res.status(200).json({
+            message: 'Đã tạo nhận xét AI thành công',
+            studentId,
+            comment
+        });
+    } catch (error) {
+        console.error('generateAiCommentForStudent error:', error);
+        return res.status(500).json({ message: error.message || 'Lỗi khi tạo nhận xét AI' });
+    }
+};
+
+const generateAiCommentStateless = async (req, res) => {
+    try {
+        const {
+            totalTaskLength,
+            doneTask,
+            totalScore,
+            incorrectTasks,
+            missingTasks,
+            presentation,
+            skills,
+            attendance
+        } = req.body || {};
+
+        const comment = await aiService.generateComment({
+            totalTaskLength: totalTaskLength || 0,
+            doneTask: doneTask || 0,
+            totalScore: totalScore || 0,
+            incorrectTasks: incorrectTasks || '',
+            missingTasks: missingTasks || '',
+            presentation: presentation || '',
+            skills: skills || '',
+            attendance: attendance !== false
+        });
+
+        return res.status(200).json({ comment });
+    } catch (error) {
+        console.error('generateAiCommentStateless error:', error);
+        return res.status(500).json({ message: error.message || 'Lỗi khi tạo nhận xét AI' });
+    }
+};
+
+const generateAiCommentForLesson = async (req, res) => {
+    try {
+        const lessonId = parseInt(req.params.lessonId, 10);
+
+        const lesson = await db.Lesson.findByPk(lessonId);
+        if (!lesson) {
+            return res.status(404).json({ message: 'Buổi học không tồn tại' });
+        }
+        if (lesson.isLocked) {
+            return res.status(403).json({ message: 'Buổi học đã bị chốt, không thể chỉnh sửa nhận xét.' });
+        }
+
+        const performances = await db.StudentPerformance.findAll({
+            include: [
+                { model: db.Lesson, where: { id: lessonId }, through: { attributes: [] } },
+                { model: db.Student, attributes: ['id', 'fullName'], through: { attributes: [] } }
+            ]
+        });
+
+        const isGraded = (p) => {
+            const hasIncorrect = Array.isArray(p.incorrectTasks)
+                ? p.incorrectTasks.length > 0
+                : (p.incorrectTasks && String(p.incorrectTasks).trim() !== '');
+            const hasMissing = Array.isArray(p.missingTasks)
+                ? p.missingTasks.length > 0
+                : (p.missingTasks && String(p.missingTasks).trim() !== '');
+            return p.doneTask > 0 || p.totalScore > 0 || hasIncorrect || hasMissing;
+        };
+        const validPerformances = performances.filter(isGraded);
+
+        if (validPerformances.length === 0) {
+            return res.status(400).json({ message: 'Chưa có học sinh nào được chấm bài cho buổi học này.' });
+        }
+
+        const lessonStudents = await db.LessonStudent.findAll({ where: { lessonId } });
+        const attendanceMap = {};
+        lessonStudents.forEach(ls => { attendanceMap[ls.studentId] = ls.attendance; });
+
+        const results = await Promise.allSettled(
+            validPerformances.map(async (perf) => {
+                const student = perf.Students && perf.Students[0];
+                if (!student) throw new Error('Không có student gắn với performance');
+                const comment = await aiService.generateComment({
+                    totalTaskLength: lesson.totalTaskLength,
+                    doneTask: perf.doneTask,
+                    totalScore: perf.totalScore,
+                    incorrectTasks: perf.incorrectTasks,
+                    missingTasks: perf.missingTasks,
+                    presentation: perf.presentation,
+                    skills: perf.skills,
+                    attendance: attendanceMap[student.id] || false
+                });
+                await perf.update({ comment });
+                return { studentId: student.id, fullName: student.fullName, comment };
+            })
+        );
+
+        const succeeded = results
+            .filter(r => r.status === 'fulfilled')
+            .map(r => r.value);
+        const failed = results
+            .filter(r => r.status === 'rejected')
+            .map(r => (r.reason && r.reason.message) || 'unknown error');
+
+        return res.status(200).json({
+            message: `Đã tạo ${succeeded.length}/${validPerformances.length} nhận xét`,
+            results: succeeded,
+            failed
+        });
+    } catch (error) {
+        console.error('generateAiCommentForLesson error:', error);
+        return res.status(500).json({ message: error.message || 'Lỗi khi tạo nhận xét AI cho cả lớp' });
+    }
+};
+
 module.exports = {
     getAssistantInfo: getAssistantInfo,
     createAssistant: createAssistant,
@@ -627,5 +776,8 @@ module.exports = {
     updateLessonContent: updateLessonContent,
     getLessonInfo: getLessonInfo,
     updateStudentAttendance: updateStudentAttendance,
-    updateHomeworkList: updateHomeworkList
+    updateHomeworkList: updateHomeworkList,
+    generateAiCommentForStudent: generateAiCommentForStudent,
+    generateAiCommentForLesson: generateAiCommentForLesson,
+    generateAiCommentStateless: generateAiCommentStateless
 }

@@ -28,9 +28,19 @@ module.exports = (sequelize, DataTypes) => {
                 as: 'performances'
             });
 
+            // Liên kết ngược lại với User
+            Student.belongsTo(models.User, {
+                foreignKey: 'userId',
+                as: 'user'
+            });
+
         }
     }
     Student.init({
+        userId: {
+            type: DataTypes.INTEGER,
+            allowNull: true,
+        },
         fullName: {
             type: DataTypes.STRING,
             allowNull: false

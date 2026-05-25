@@ -178,9 +178,11 @@ const getManagerClasses = async (req, res) => {
 
 // Tạo buổi học cho Manager
 const createLesson = async (req, res) => {
+    const t = await db.sequelize.transaction();
     try {
         const { lessonDate, classId } = req.body;
         if (!lessonDate || !classId) {
+            await t.rollback();
             return res.status(400).json({ message: 'lessonDate và classId là bắt buộc' });
         }
 
@@ -188,19 +190,39 @@ const createLesson = async (req, res) => {
             lessonContent: '',
             totalTaskLength: '',
             lessonDate,
-        });
+        }, { transaction: t });
 
         const newLessonClass = await db.LessonClass.create({
             lessonId: newLesson.id,
             classId
+        }, { transaction: t });
+
+        // Snapshot danh sách học sinh hiện tại của lớp vào Lesson_Students
+        const studentLinks = await db.Student_Classes.findAll({
+            where: { classId },
+            attributes: ['studentId'],
+            transaction: t
         });
 
+        if (studentLinks.length > 0) {
+            await db.LessonStudent.bulkCreate(
+                studentLinks.map(s => ({
+                    lessonId: newLesson.id,
+                    studentId: s.studentId,
+                    attendance: true
+                })),
+                { transaction: t }
+            );
+        }
+
+        await t.commit();
         return res.status(201).json({
             message: 'Tạo mới buổi học thành công!',
             lesson: newLesson,
             lessonClass: newLessonClass
         });
     } catch (error) {
+        await t.rollback();
         console.error('createLesson error:', error);
         return res.status(500).json({ error: error.message || 'Internal server error' });
     }
@@ -368,20 +390,19 @@ const sendLessonResultsEmails = async (req, res) => {
             });
         }
 
-        // 2) Lấy className + students (reuse logic getClassStudents)
-        const cls = await db.Class.findByPk(classId, {
-            attributes: ["id", "className"],
-            include: [{
-                model: db.Student,
-                as: "students",
-                attributes: ["id", "fullName", "parentEmail"],
-                through: { attributes: [] }
-            }]
-        });
-
+        // 2) Lấy className + students từ snapshot Lesson_Students
+        const cls = await db.Class.findByPk(classId, { attributes: ["id", "className"] });
         if (!cls) return res.status(404).json({ message: "Class not found" });
 
-        const students = cls.students || [];
+        const lessonStudentRows = await db.LessonStudent.findAll({ where: { lessonId } });
+        const lessonStudentIds = lessonStudentRows.map(r => r.studentId);
+
+        const students = lessonStudentIds.length > 0
+            ? await db.Student.findAll({
+                where: { id: { [db.Sequelize.Op.in]: lessonStudentIds } },
+                attributes: ["id", "fullName", "parentEmail"]
+            })
+            : [];
 
         // 3) Lấy previous lesson của class (reuse logic getLessonDetail)
         const previousLesson = await db.Lesson.findOne({
@@ -400,12 +421,8 @@ const sendLessonResultsEmails = async (req, res) => {
         const previousLessonContent = previousLesson?.lessonContent || "Không có buổi học trước";
         const previousHomeworkCount = previousLesson?.totalTaskLength ?? 0;
 
-        // 4) Attendance map từ LessonStudent
-        const attendanceRows = await db.LessonStudent.findAll({
-            where: { lessonId },
-            attributes: ["studentId", "attendance"]
-        });
-        const attendanceMap = new Map(attendanceRows.map(r => [r.studentId, r.attendance]));
+        // 4) Attendance map từ lessonStudentRows đã fetch ở bước 2
+        const attendanceMap = new Map(lessonStudentRows.map(r => [r.studentId, r.attendance]));
 
         // 5) Performance rows cho lessonId: dùng SQL raw để không phụ thuộc association
         const [perfRows] = await db.sequelize.query(
@@ -611,6 +628,146 @@ const submitQuizAnswers = async (req, res) => {
     }
 };
 
+const getManagerDashboardStats = async (req, res) => {
+    try {
+        const managerId = req.user.userId;
+        const manager = await db.Manager.findByPk(managerId, { attributes: ['gradeLevel'] });
+        if (!manager) return res.status(404).json({ message: 'Manager not found' });
+
+        const classes = await db.Class.findAll({
+            where: { gradeLevel: manager.gradeLevel },
+            attributes: ['id', 'className']
+        });
+
+        const empty = (classCount = 0, totalStudents = 0) => ({
+            summary: { classCount, totalStudents, totalLessons: 0, overallAvgScore: null },
+            classNames: classes.map(c => c.className),
+            scoreData: [],
+            attendanceData: []
+        });
+
+        if (classes.length === 0) return res.status(200).json(empty());
+
+        const classIds = classes.map(c => c.id);
+
+        const [studentCountRows] = await db.sequelize.query(
+            `SELECT COUNT(DISTINCT studentId) AS total FROM Student_Classes WHERE classId IN (:classIds)`,
+            { replacements: { classIds } }
+        );
+        const totalStudents = parseInt(studentCountRows[0]?.total) || 0;
+
+        // Lấy tất cả buổi học của các lớp, sắp xếp mới nhất trước
+        const [allLessonRows] = await db.sequelize.query(`
+            SELECT lc.classId, l.id AS lessonId, l.lessonDate
+            FROM Lesson_Classes lc
+            JOIN Lessons l ON l.id = lc.lessonId
+            WHERE lc.classId IN (:classIds)
+            ORDER BY l.lessonDate DESC
+        `, { replacements: { classIds } });
+
+        // Giữ lại 2 buổi học gần nhất của mỗi lớp
+        const lessonsByClass = new Map();
+        for (const row of allLessonRows) {
+            if (!lessonsByClass.has(row.classId)) lessonsByClass.set(row.classId, []);
+            const arr = lessonsByClass.get(row.classId);
+            if (arr.length < 2) arr.push(row);
+        }
+
+        const targetLessonIds = [...lessonsByClass.values()].flat().map(r => r.lessonId);
+        if (targetLessonIds.length === 0) return res.status(200).json(empty(classes.length, totalStudents));
+
+        // Điểm danh theo buổi học và lớp
+        const [attendanceRows] = await db.sequelize.query(`
+            SELECT ls.lessonId, lc.classId,
+                COUNT(*) AS total,
+                SUM(CASE WHEN ls.attendance = 1 THEN 1.0 ELSE 0 END) AS present
+            FROM Lesson_Students ls
+            JOIN Lesson_Classes lc ON lc.lessonId = ls.lessonId
+            WHERE ls.lessonId IN (:lessonIds) AND lc.classId IN (:classIds)
+            GROUP BY ls.lessonId, lc.classId
+        `, { replacements: { lessonIds: targetLessonIds, classIds } });
+
+        // Điểm trung bình theo buổi học và lớp
+        const [scoreRows] = await db.sequelize.query(`
+            SELECT spl.lessonId, lc.classId,
+                AVG(CAST(sp.totalScore AS FLOAT)) AS avgScore
+            FROM StudentPerformance_Lessons spl
+            JOIN StudentPerformances sp ON sp.id = spl.studentPerformanceId
+            JOIN Lesson_Classes lc ON lc.lessonId = spl.lessonId
+            WHERE spl.lessonId IN (:lessonIds) AND lc.classId IN (:classIds)
+            GROUP BY spl.lessonId, lc.classId
+        `, { replacements: { lessonIds: targetLessonIds, classIds } });
+
+        const attendanceMap = new Map(
+            attendanceRows.map(r => [`${r.classId}_${r.lessonId}`,
+                r.total > 0 ? Math.round((r.present / r.total) * 100) : null
+            ])
+        );
+        const scoreMap = new Map(
+            scoreRows.map(r => [`${r.classId}_${r.lessonId}`,
+                r.avgScore != null ? Math.round(parseFloat(r.avgScore) * 10) / 10 : null
+            ])
+        );
+
+        // Tính ISO week và nhãn "dd/MM" (thứ Hai của tuần)
+        const getWeekKey = (dateStr) => {
+            const s = typeof dateStr === 'string' ? dateStr : dateStr.toISOString();
+            const [y, m, d] = s.substring(0, 10).split('-').map(Number);
+            const date = new Date(y, m - 1, d);
+            const thu = new Date(date);
+            thu.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
+            const week1 = new Date(thu.getFullYear(), 0, 4);
+            const weekNum = 1 + Math.round(((thu.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
+            const monday = new Date(date);
+            monday.setDate(date.getDate() - (date.getDay() + 6) % 7);
+            const label = `${String(monday.getDate()).padStart(2, '0')}/${String(monday.getMonth() + 1).padStart(2, '0')}`;
+            return { key: `${thu.getFullYear()}-${weekNum}`, label };
+        };
+
+        // Gán mỗi lessonId vào tuần tương ứng
+        const lessonWeekMap = new Map();
+        const weekLabelMap = new Map();
+        for (const rows of lessonsByClass.values()) {
+            for (const r of rows) {
+                const { key, label } = getWeekKey(r.lessonDate);
+                lessonWeekMap.set(r.lessonId, key);
+                if (!weekLabelMap.has(key)) weekLabelMap.set(key, label);
+            }
+        }
+
+        // Lấy 2 tuần gần nhất
+        const last2WeekKeys = [...weekLabelMap.keys()].sort().slice(-2);
+
+        const buildChartData = (dataMap) =>
+            last2WeekKeys.map(weekKey => {
+                const obj = { week: weekLabelMap.get(weekKey) };
+                for (const cls of classes) {
+                    const lesson = (lessonsByClass.get(cls.id) || [])
+                        .find(l => lessonWeekMap.get(l.lessonId) === weekKey);
+                    obj[cls.className] = lesson
+                        ? (dataMap.get(`${cls.id}_${lesson.lessonId}`) ?? null)
+                        : null;
+                }
+                return obj;
+            });
+
+        const allScores = scoreRows.map(r => parseFloat(r.avgScore)).filter(v => !isNaN(v));
+        const overallAvgScore = allScores.length > 0
+            ? Math.round((allScores.reduce((s, v) => s + v, 0) / allScores.length) * 10) / 10
+            : null;
+
+        return res.status(200).json({
+            summary: { classCount: classes.length, totalStudents, totalLessons: targetLessonIds.length, overallAvgScore },
+            classNames: classes.map(c => c.className),
+            scoreData: buildChartData(scoreMap),
+            attendanceData: buildChartData(attendanceMap)
+        });
+    } catch (error) {
+        console.error('getManagerDashboardStats error:', error);
+        return res.status(500).json({ message: 'Error fetching dashboard stats' });
+    }
+};
+
 module.exports = {
     getManagerInfo,
     createManager,
@@ -623,5 +780,6 @@ module.exports = {
     getLessonDetail,
     toggleLessonLock,
     sendLessonResultsEmails,
-    submitQuizAnswers
+    submitQuizAnswers,
+    getManagerDashboardStats
 };

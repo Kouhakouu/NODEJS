@@ -15,6 +15,15 @@ module.exports = {
             createdAt: Sequelize.DATE,
             updatedAt: Sequelize.DATE
         });
+
+        await queryInterface.bulkInsert('Roles', [
+            { roleName: 'ADMIN', createdAt: new Date(), updatedAt: new Date() },
+            { roleName: 'TEACHER', createdAt: new Date(), updatedAt: new Date() },
+            { roleName: 'MANAGER', createdAt: new Date(), updatedAt: new Date() },
+            { roleName: 'ASSISTANT', createdAt: new Date(), updatedAt: new Date() },
+            // ---> THÊM ROLE STUDENT VÀO ĐÂY <---
+            { roleName: 'STUDENT', createdAt: new Date(), updatedAt: new Date() }
+        ]);
     },
     down: async (queryInterface) => {
         await queryInterface.dropTable('Roles');

@@ -8,6 +8,16 @@ module.exports = {
                 primaryKey: true,
                 type: Sequelize.INTEGER
             },
+            userId: {
+                type: Sequelize.INTEGER,
+                allowNull: true,
+                references: {
+                    model: 'Users', // Trỏ đến bảng Users
+                    key: 'userId'   // Trỏ đến cột userId của bảng Users
+                },
+                onUpdate: 'CASCADE',
+                onDelete: 'SET NULL' // Nếu xoá User thì Student giữ lại data cá nhân, chỉ set userId = null
+            },
             fullName: {
                 type: Sequelize.STRING,
                 allowNull: false

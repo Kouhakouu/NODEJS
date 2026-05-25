@@ -7,11 +7,12 @@ module.exports = (sequelize, DataTypes) => {
             // mỗi user thuộc 1 role
             User.belongsTo(models.Role, { foreignKey: 'roleId', as: 'role' });
 
-            // mỗi user có thể có profile Admin / Assistant / Teacher / Manager
+            // mỗi user có thể có profile Admin / Assistant / Teacher / Manager / Student
             User.hasOne(models.Admin, { foreignKey: 'userId', as: 'adminProfile' });
             User.hasOne(models.Assistant, { foreignKey: 'userId', as: 'assistantProfile' });
             User.hasOne(models.Teacher, { foreignKey: 'userId', as: 'teacherProfile' });
             User.hasOne(models.Manager, { foreignKey: 'userId', as: 'managerProfile' });
+            User.hasOne(models.Student, { foreignKey: 'userId', as: 'studentProfile' });
         }
     }
     User.init({

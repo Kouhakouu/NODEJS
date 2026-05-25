@@ -6,6 +6,9 @@ import managerController from "../controllers/managerController";
 import assistantController from "../controllers/assistantController";
 import scheduleController from "../controllers/scheduleController";
 import studentController from "../controllers/studentController";
+import courseController from "../controllers/courseController";
+import profileController from "../controllers/profileController";
+import adminController from "../controllers/adminController";
 import { authMiddleware } from "../services/authMiddleware";
 
 let router = express.Router();
@@ -75,8 +78,16 @@ let initWebRoutes = (app) => {
     router.put('/assistant/classes/:classId/lessons/:lessonId', authMiddleware, assistantController.updateLessonContent);
     router.get('/assistant/classes/:id/lessons/:lessonId', authMiddleware, assistantController.getLessonInfo);
     router.put('/assistant/lessons/:lessonId/students/:studentId/attendance', assistantController.updateStudentAttendance);
+    router.post('/assistant/classes/:classId/lessons/:lessonId/students/:studentId/ai-comment', authMiddleware, assistantController.generateAiCommentForStudent);
+    router.post('/assistant/classes/:classId/lessons/:lessonId/ai-comment-all', authMiddleware, assistantController.generateAiCommentForLesson);
+    router.post('/assistant/ai-comment', authMiddleware, assistantController.generateAiCommentStateless);
+
+    //trang học sinh
+    router.get('/student/classes', authMiddleware, studentController.getStudentClasses);
+    router.get('/student/classes/:id', authMiddleware, studentController.getStudentClassDetail);
 
     //trang quản lý
+    router.get('/manager/dashboard-stats', authMiddleware, managerController.getManagerDashboardStats);
     router.get('/manager/classes', authMiddleware, managerController.getManagerClasses);
     router.get('/manager/students/:id', assistantController.getClassStudentDetail);
     router.post('/createLesson', managerController.createLesson);
@@ -88,6 +99,21 @@ let initWebRoutes = (app) => {
     router.put('/manager/lessons/:lessonId/lock', managerController.toggleLessonLock);
     router.post('/manager/classes/:classId/lessons/:lessonId/send-results-emails', authMiddleware, managerController.sendLessonResultsEmails);
     router.post('/manager/quiz/submit', managerController.submitQuizAnswers);
+
+    // profile - tất cả role
+    router.get('/profile', authMiddleware, profileController.getProfile);
+    router.put('/profile', authMiddleware, profileController.updateProfile);
+    router.put('/profile/password', authMiddleware, profileController.changePassword);
+
+    // admin stats
+    router.get('/admin/stats', authMiddleware, adminController.getAdminStats);
+
+    // khóa học - admin
+    router.get('/admin/courses', courseController.getAllCourses);
+    router.put('/admin/courses/:id', courseController.updateCourseVisibility);
+
+    // khóa học - guest (public)
+    router.get('/public/courses', courseController.getPublishedCourses);
 
     return app.use("/", router);
 };
