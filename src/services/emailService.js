@@ -70,4 +70,13 @@ async function sendQuizResultEmail({ to, subject, data }) {
     });
 }
 
-module.exports = { sendLessonResultEmail, sendQuizSubmissionEmail, sendQuizResultEmail };
+async function sendAssistantCodeEmail({ to, subject, data }) {
+    return sendTemplatedEmail({
+        to,
+        subject,
+        templateName: "assistant-code",
+        data,
+    });
+}
+
+module.exports = { sendLessonResultEmail, sendQuizSubmissionEmail, sendQuizResultEmail, sendAssistantCodeEmail };

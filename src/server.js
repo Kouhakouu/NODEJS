@@ -1,9 +1,9 @@
-const express = require("express");
-const cors = require("cors");
+import express from "express";
+import cors from "cors";
 import bodyParser from "body-parser";
 import viewEngine from "./config/viewEngine";
 import initWebRoutes from "./routes/web";
-const connectDB = require("./config/connectDB");
+import connectDB from "./config/connectDB";
 import dotenv from "dotenv";
 import authRoutes from "./routes/auth.js";
 

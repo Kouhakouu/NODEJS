@@ -100,6 +100,10 @@ let initWebRoutes = (app) => {
     router.post('/manager/classes/:classId/lessons/:lessonId/send-results-emails', authMiddleware, managerController.sendLessonResultsEmails);
     router.post('/manager/quiz/submit', managerController.submitQuizAnswers);
 
+    //kích hoạt tài khoản trợ giảng (làm test -> nhận mã email -> nhập mã)
+    router.post('/assistant/onboarding/request-code', authMiddleware, assistantController.requestVerificationCode);
+    router.post('/assistant/onboarding/verify-code', authMiddleware, assistantController.verifyAssistantCode);
+
     // profile - tất cả role
     router.get('/profile', authMiddleware, profileController.getProfile);
     router.put('/profile', authMiddleware, profileController.updateProfile);

@@ -23,7 +23,7 @@ exports.login = async (req, res) => {
             include: [
                 { model: Role, as: 'role', attributes: ['roleName'] },
                 { model: Admin, as: 'adminProfile', attributes: ['fullName'] },
-                { model: Assistant, as: 'assistantProfile', attributes: ['fullName'] },
+                { model: Assistant, as: 'assistantProfile', attributes: ['fullName', 'status'] },
                 { model: Teacher, as: 'teacherProfile', attributes: ['fullName'] },
                 { model: Manager, as: 'managerProfile', attributes: ['fullName', 'gradeLevel'] },
                 { model: Student, as: 'studentProfile', attributes: ['fullName'] }
@@ -42,13 +42,14 @@ exports.login = async (req, res) => {
 
         // 3. Lấy roleName và fullName từ đúng profile
         const roleName = user.role.roleName;
-        let fullName = null, gradeLevel = null;
+        let fullName = null, gradeLevel = null, status = null;
         switch (roleName) {
             case 'ADMIN':
                 fullName = user.adminProfile?.fullName;
                 break;
             case 'ASSISTANT':
                 fullName = user.assistantProfile?.fullName;
+                status = user.assistantProfile?.status ?? 0;
                 break;
             case 'TEACHER':
                 fullName = user.teacherProfile?.fullName;
@@ -77,7 +78,8 @@ exports.login = async (req, res) => {
                 email: user.email,
                 role: roleName,
                 fullName,
-                ...(gradeLevel && { gradeLevel })
+                ...(gradeLevel && { gradeLevel }),
+                ...(status !== null && { status })
             }
         });
 

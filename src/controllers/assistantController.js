@@ -2,6 +2,9 @@ const bcrypt = require('bcryptjs');
 import db from '../models/index';
 import CRUDservice from '../services/CRUDservice';
 import aiService from '../services/aiService';
+const { sendAssistantCodeEmail } = require('../services/emailService');
+
+const isValidEmail = (s) => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 
 // Trang admin: lấy thông tin trợ giảng kèm lớp
 const getAssistantInfo = async (req, res) => {
@@ -125,6 +128,77 @@ let updateAssistant = async (req, res) => {
     } catch (e) {
         console.error(e);
         return res.status(500).json({ message: e.message || 'Error updating assistant.' });
+    }
+};
+
+// ===== Kích hoạt tài khoản trợ giảng (làm test -> nhận mã qua email -> nhập mã) =====
+
+// Bước 1: trợ giảng làm xong bài test, gửi mã 6 số về email tuỳ chọn
+const requestVerificationCode = async (req, res) => {
+    try {
+        if (req.user.role !== 'ASSISTANT') {
+            return res.status(403).json({ message: 'Chỉ trợ giảng mới có thể thực hiện thao tác này.' });
+        }
+
+        const { email } = req.body;
+        if (!isValidEmail(email)) {
+            return res.status(400).json({ message: 'Vui lòng nhập email hợp lệ để nhận mã.' });
+        }
+
+        const assistant = await db.Assistant.findByPk(req.user.userId);
+        if (!assistant) {
+            return res.status(404).json({ message: 'Không tìm thấy trợ giảng.' });
+        }
+        if (assistant.status === 1) {
+            return res.status(400).json({ message: 'Tài khoản đã được kích hoạt, không cần nhập mã.' });
+        }
+
+        // Sinh mã 6 chữ số, lưu lại để đối chiếu
+        const code = String(Math.floor(100000 + Math.random() * 900000));
+        await assistant.update({ verifyCode: code });
+
+        await sendAssistantCodeEmail({
+            to: email,
+            subject: process.env.ASSISTANT_CODE_SUBJECT || '[CMATH EDUCATION] Mã kích hoạt tài khoản trợ giảng',
+            data: { fullName: assistant.fullName, code },
+        });
+
+        return res.status(200).json({ message: 'Đã gửi mã xác thực về email của bạn.' });
+    } catch (error) {
+        console.error('requestVerificationCode error:', error);
+        return res.status(500).json({ message: error.message || 'Lỗi khi gửi mã xác thực.' });
+    }
+};
+
+// Bước 2: trợ giảng nhập mã, đúng thì status = 1 -> được dùng web
+const verifyAssistantCode = async (req, res) => {
+    try {
+        if (req.user.role !== 'ASSISTANT') {
+            return res.status(403).json({ message: 'Chỉ trợ giảng mới có thể thực hiện thao tác này.' });
+        }
+
+        const { code } = req.body;
+        if (!code) {
+            return res.status(400).json({ message: 'Vui lòng nhập mã xác thực.' });
+        }
+
+        const assistant = await db.Assistant.findByPk(req.user.userId);
+        if (!assistant) {
+            return res.status(404).json({ message: 'Không tìm thấy trợ giảng.' });
+        }
+        if (assistant.status === 1) {
+            return res.status(200).json({ message: 'Tài khoản đã được kích hoạt.', status: 1 });
+        }
+        if (!assistant.verifyCode || String(code).trim() !== assistant.verifyCode) {
+            return res.status(400).json({ message: 'Mã xác thực không đúng. Vui lòng kiểm tra lại email.' });
+        }
+
+        await assistant.update({ status: 1, verifyCode: null });
+
+        return res.status(200).json({ message: 'Kích hoạt tài khoản thành công!', status: 1 });
+    } catch (error) {
+        console.error('verifyAssistantCode error:', error);
+        return res.status(500).json({ message: error.message || 'Lỗi khi xác thực mã.' });
     }
 };
 
@@ -762,6 +836,8 @@ const generateAiCommentForLesson = async (req, res) => {
 module.exports = {
     getAssistantInfo: getAssistantInfo,
     createAssistant: createAssistant,
+    requestVerificationCode: requestVerificationCode,
+    verifyAssistantCode: verifyAssistantCode,
     postClassAssistantCRUD: postClassAssistantCRUD,
     postAssistantDeleteCRUD: postAssistantDeleteCRUD,
     postDeleteClassAssistantCRUD: postDeleteClassAssistantCRUD,
