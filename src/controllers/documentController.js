@@ -1,7 +1,10 @@
 // controllers/documentController.js
 const multer = require('multer');
 const db = require('../models');
-const cloudinary = require('../config/cloudinary');
+// Lazy-load: chỉ nạp SDK Cloudinary khi thực sự upload/xoá file
+const cloudinary = {
+    get uploader() { return require('../config/cloudinary').uploader; }
+};
 
 // Lưu file tạm trong RAM (không ghi ra đĩa) -> hợp với serverless trên Vercel
 const storage = multer.memoryStorage();

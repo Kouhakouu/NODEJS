@@ -1,4 +1,4 @@
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcrypt');
 const db = require('../models');
 
 const getProfile = async (req, res) => {

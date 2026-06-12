@@ -3,7 +3,7 @@ import cors from "cors";
 import bodyParser from "body-parser";
 import viewEngine from "./config/viewEngine";
 import initWebRoutes from "./routes/web";
-import connectDB from "./config/connectDB";
+import db from "./models/index";
 import dotenv from "dotenv";
 import authRoutes from "./routes/auth.js";
 
@@ -13,6 +13,18 @@ const app = express();
 
 app.get("/", (req, res) => {
     res.send("Hello World! 👋");
+});
+
+// Keep-warm: đánh thức cả serverless function lẫn Neon (auto-suspend sau ~5 phút).
+// Frontend ping khi mở trang login; nên đăng ký thêm cron ngoài (cron-job.org) gọi mỗi 4 phút.
+app.get("/health", async (_req, res) => {
+    try {
+        await db.sequelize.query("SELECT 1");
+        return res.json({ ok: true });
+    } catch (err) {
+        console.error("Health check failed:", err.message);
+        return res.status(500).json({ ok: false });
+    }
 });
 
 app.use(cors({
@@ -29,7 +41,6 @@ viewEngine(app);
 app.use("/auth", authRoutes);
 
 initWebRoutes(app);
-connectDB();
 
 const port = process.env.PORT || 3000;
 

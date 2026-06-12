@@ -1,6 +1,6 @@
 // controllers/teacherController.js
 
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcrypt');
 const db = require('../models');
 
 //trang admin

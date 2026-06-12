@@ -1,7 +1,10 @@
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcrypt');
 const db = require('../models');
 const { safeStr, formatDateVN, jsonToText } = require("../utils/emailHelpers");
-const { sendLessonResultEmail, sendQuizSubmissionEmail, sendQuizResultEmail } = require("../services/emailService");
+// Lazy-load để cold start không phải nạp nodemailer/handlebars khi request không gửi mail
+const sendLessonResultEmail = (...args) => require("../services/emailService").sendLessonResultEmail(...args);
+const sendQuizSubmissionEmail = (...args) => require("../services/emailService").sendQuizSubmissionEmail(...args);
+const sendQuizResultEmail = (...args) => require("../services/emailService").sendQuizResultEmail(...args);
 
 // Lấy thông tin tất cả các manager kèm email từ User
 const getManagerInfo = async (req, res) => {

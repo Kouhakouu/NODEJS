@@ -1,4 +1,4 @@
-import bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 import db from '../models/index';
 
 const salt = bcrypt.genSaltSync(10);

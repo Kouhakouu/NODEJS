@@ -1,8 +1,11 @@
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcrypt');
 import db from '../models/index';
 import CRUDservice from '../services/CRUDservice';
-import aiService from '../services/aiService';
-const { sendAssistantCodeEmail } = require('../services/emailService');
+// Lazy-load để cold start không phải nạp SDK AI / nodemailer khi request không dùng đến
+const aiService = {
+    generateComment: (...args) => require('../services/aiService').generateComment(...args)
+};
+const sendAssistantCodeEmail = (...args) => require('../services/emailService').sendAssistantCodeEmail(...args);
 
 const isValidEmail = (s) => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 

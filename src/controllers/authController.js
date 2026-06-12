@@ -1,6 +1,6 @@
 // controllers/authController.js
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcrypt');
 const {
     sequelize,
     User,
@@ -12,56 +12,52 @@ const {
     Student
 } = require('../models');
 require('dotenv').config();
+
+// Mỗi user chỉ thuộc 1 role nên chỉ cần query đúng 1 bảng profile
+const PROFILE_BY_ROLE = {
+    ADMIN: { model: Admin, attributes: ['fullName'] },
+    ASSISTANT: { model: Assistant, attributes: ['fullName', 'status'] },
+    TEACHER: { model: Teacher, attributes: ['fullName'] },
+    MANAGER: { model: Manager, attributes: ['fullName', 'gradeLevel'] },
+    STUDENT: { model: Student, attributes: ['fullName'] }
+};
+
 //API đăng nhập
 exports.login = async (req, res) => {
     const { email, password } = req.body;
 
     try {
-        // 1. Tìm user
+        // 1. Tìm user kèm role
         const user = await User.findOne({
             where: { email },
-            include: [
-                { model: Role, as: 'role', attributes: ['roleName'] },
-                { model: Admin, as: 'adminProfile', attributes: ['fullName'] },
-                { model: Assistant, as: 'assistantProfile', attributes: ['fullName', 'status'] },
-                { model: Teacher, as: 'teacherProfile', attributes: ['fullName'] },
-                { model: Manager, as: 'managerProfile', attributes: ['fullName', 'gradeLevel'] },
-                { model: Student, as: 'studentProfile', attributes: ['fullName'] }
-            ]
+            include: [{ model: Role, as: 'role', attributes: ['roleName'] }]
         });
 
         if (!user) {
             return res.status(401).json({ message: 'Email không tồn tại.' });
         }
 
-        // 2. So sánh mật khẩu
-        const valid = await bcrypt.compare(password, user.password);
+        // 2. So sánh mật khẩu song song với việc lấy profile theo role
+        const roleName = user.role.roleName;
+        const profileDef = PROFILE_BY_ROLE[roleName];
+        const [valid, profile] = await Promise.all([
+            bcrypt.compare(password, user.password),
+            profileDef
+                ? profileDef.model.findOne({
+                    where: { userId: user.userId },
+                    attributes: profileDef.attributes
+                })
+                : null
+        ]);
+
         if (!valid) {
             return res.status(401).json({ message: 'Mật khẩu không đúng.' });
         }
 
-        // 3. Lấy roleName và fullName từ đúng profile
-        const roleName = user.role.roleName;
-        let fullName = null, gradeLevel = null, status = null;
-        switch (roleName) {
-            case 'ADMIN':
-                fullName = user.adminProfile?.fullName;
-                break;
-            case 'ASSISTANT':
-                fullName = user.assistantProfile?.fullName;
-                status = user.assistantProfile?.status ?? 0;
-                break;
-            case 'TEACHER':
-                fullName = user.teacherProfile?.fullName;
-                break;
-            case 'MANAGER':
-                fullName = user.managerProfile?.fullName;
-                gradeLevel = user.managerProfile?.gradeLevel;
-                break;
-            case 'STUDENT':
-                fullName = user.studentProfile?.fullName;
-                break;
-        }
+        // 3. Lấy fullName và các trường riêng theo role
+        const fullName = profile?.fullName ?? null;
+        const gradeLevel = roleName === 'MANAGER' ? profile?.gradeLevel ?? null : null;
+        const status = roleName === 'ASSISTANT' ? profile?.status ?? 0 : null;
 
         // 4. Tạo token
         const token = jwt.sign(
