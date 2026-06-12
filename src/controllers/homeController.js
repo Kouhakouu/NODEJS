@@ -18,9 +18,12 @@ let getTeacherCRUD = (req, res) => {
 
 let getClassCRUD = async (req, res) => {
     try {
-        let classes = await CRUDservice.getAllClasses()
-        const teachers = await db.Teacher.findAll();
-        const classSchedules = await db.ClassSchedule.findAll();
+        // 3 query độc lập, chạy song song
+        const [classes, teachers, classSchedules] = await Promise.all([
+            CRUDservice.getAllClasses(),
+            db.Teacher.findAll(),
+            db.ClassSchedule.findAll()
+        ]);
         return res.render('class-crud.ejs', {
             classes: classes,
             teachers: teachers,
@@ -97,9 +100,12 @@ let postAssistantCRUD = async (req, res) => {
 let getClassUpdateCRUD = async (req, res) => {
     let classId = req.params.id
     if (classId) {
-        let classData = await CRUDservice.getClassById(classId)
-        let schedules = await db.ClassSchedule.findAll()
-        let teachers = await db.Teacher.findAll()
+        // 3 query độc lập, chạy song song
+        const [classData, schedules, teachers] = await Promise.all([
+            CRUDservice.getClassById(classId),
+            db.ClassSchedule.findAll(),
+            db.Teacher.findAll()
+        ])
         return res.render('class-update.ejs', {
             data: classData,
             schedules: schedules,

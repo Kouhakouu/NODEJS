@@ -1,5 +1,6 @@
 import db from '../models/index';
 import CRUDservice from '../services/CRUDservice';
+import { getClassCounts } from '../utils/classCounts';
 
 let getStudentInfo = async (req, res) => {
     try {
@@ -110,18 +111,11 @@ let getStudentClasses = async (req, res) => {
                 as: 'classes',
                 attributes: ['id', 'className', 'gradeLevel'],
                 through: { attributes: [] },
-                include: [
-                    {
-                        model: db.ClassSchedule,
-                        as: 'classSchedule',
-                        attributes: ['study_day', 'start_time', 'end_time']
-                    },
-                    {
-                        model: db.Lesson,
-                        as: 'lessons',
-                        attributes: ['id']
-                    }
-                ]
+                include: [{
+                    model: db.ClassSchedule,
+                    as: 'classSchedule',
+                    attributes: ['study_day', 'start_time', 'end_time']
+                }]
             }]
         });
 
@@ -129,11 +123,14 @@ let getStudentClasses = async (req, res) => {
             return res.status(404).json({ message: 'Không tìm thấy học sinh.' });
         }
 
+        // Số buổi học đếm riêng, không include lessons chỉ để .length
+        const { lessonCounts } = await getClassCounts(student.classes.map(c => c.id));
+
         const result = student.classes.map(c => ({
             id: c.id,
             className: c.className,
             gradeLevel: c.gradeLevel,
-            lessonsCount: c.lessons?.length ?? 0,
+            lessonsCount: lessonCounts.get(c.id) ?? 0,
             schedule: c.classSchedule ? {
                 study_day: c.classSchedule.study_day,
                 start_time: c.classSchedule.start_time,
@@ -189,40 +186,42 @@ let getStudentClassDetail = async (req, res) => {
 
         const lessonIds = classDetail.lessons.map(l => l.id);
 
-        // Điểm danh từng buổi
-        const lessonStudents = lessonIds.length > 0
-            ? await db.LessonStudent.findAll({
-                where: { studentId: student.id, lessonId: { [db.Sequelize.Op.in]: lessonIds } }
-            })
-            : [];
+        // Điểm danh + kết quả học tập: trước đây là 4 query nối tiếp (lessonStudents
+        // -> perfStudents -> perfLessons -> performances); gộp performance về 1 query
+        // join qua association và chạy song song với query điểm danh.
+        const [lessonStudents, performances] = lessonIds.length > 0
+            ? await Promise.all([
+                db.LessonStudent.findAll({
+                    where: { studentId: student.id, lessonId: { [db.Sequelize.Op.in]: lessonIds } }
+                }),
+                db.StudentPerformance.findAll({
+                    include: [
+                        {
+                            model: db.Student,
+                            where: { id: student.id },
+                            attributes: [],
+                            through: { attributes: [] }
+                        },
+                        {
+                            model: db.Lesson,
+                            where: { id: { [db.Sequelize.Op.in]: lessonIds } },
+                            attributes: ['id'],
+                            through: { attributes: [] }
+                        }
+                    ],
+                    order: [['id', 'ASC']]
+                })
+            ])
+            : [[], []];
+
         const attendanceMap = {};
         lessonStudents.forEach(ls => { attendanceMap[ls.lessonId] = ls.attendance; });
 
-        // Kết quả học tập: tìm qua 2 bảng trung gian
-        const perfStudents = await db.StudentPerformanceStudent.findAll({
-            where: { studentId: student.id }
-        });
-        const perfIds = perfStudents.map(ps => ps.studentPerformanceId);
-
-        const perfLessons = perfIds.length > 0 && lessonIds.length > 0
-            ? await db.StudentPerformanceLesson.findAll({
-                where: {
-                    studentPerformanceId: { [db.Sequelize.Op.in]: perfIds },
-                    lessonId: { [db.Sequelize.Op.in]: lessonIds }
-                }
-            })
-            : [];
-
-        const performances = perfLessons.length > 0
-            ? await db.StudentPerformance.findAll({
-                where: { id: { [db.Sequelize.Op.in]: perfLessons.map(pl => pl.studentPerformanceId) } }
-            })
-            : [];
-
+        // order ASC + ghi đè -> bản ghi performance mới nhất của mỗi buổi thắng (giữ logic cũ)
         const performanceByLesson = {};
-        perfLessons.forEach(pl => {
-            const perf = performances.find(p => p.id === pl.studentPerformanceId);
-            if (perf) performanceByLesson[pl.lessonId] = perf;
+        performances.forEach(p => {
+            const lid = p.Lessons?.[0]?.id;
+            if (lid != null) performanceByLesson[lid] = p;
         });
 
         const lessons = classDetail.lessons.map(lesson => ({

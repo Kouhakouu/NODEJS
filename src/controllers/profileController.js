@@ -1,48 +1,41 @@
 const bcrypt = require('bcrypt');
 const db = require('../models');
 
+const PROFILE_MODEL_BY_ROLE = {
+    ADMIN: 'Admin',
+    TEACHER: 'Teacher',
+    ASSISTANT: 'Assistant',
+    MANAGER: 'Manager',
+    STUDENT: 'Student',
+};
+
 const getProfile = async (req, res) => {
     try {
         const { userId, role } = req.user;
 
-        const user = await db.User.findByPk(userId, { attributes: ['userId', 'email'] });
+        const modelName = PROFILE_MODEL_BY_ROLE[role];
+        if (!modelName) return res.status(403).json({ message: 'Role không hỗ trợ.' });
+
+        // User + profile theo role: 2 query độc lập, chạy song song
+        const [user, row] = await Promise.all([
+            db.User.findByPk(userId, { attributes: ['userId', 'email'] }),
+            db[modelName].findOne({ where: { userId } })
+        ]);
         if (!user) return res.status(404).json({ message: 'Không tìm thấy người dùng.' });
 
-        let profile = {};
-        switch (role) {
-            case 'ADMIN': {
-                const admin = await db.Admin.findOne({ where: { userId } });
-                profile = { fullName: admin?.fullName, phoneNumber: admin?.phoneNumber };
-                break;
-            }
-            case 'TEACHER': {
-                const teacher = await db.Teacher.findOne({ where: { userId } });
-                profile = { fullName: teacher?.fullName, phoneNumber: teacher?.phoneNumber };
-                break;
-            }
-            case 'ASSISTANT': {
-                const assistant = await db.Assistant.findOne({ where: { userId } });
-                profile = { fullName: assistant?.fullName, phoneNumber: assistant?.phoneNumber };
-                break;
-            }
-            case 'MANAGER': {
-                const manager = await db.Manager.findOne({ where: { userId } });
-                profile = { fullName: manager?.fullName, phoneNumber: manager?.phoneNumber, gradeLevel: manager?.gradeLevel };
-                break;
-            }
-            case 'STUDENT': {
-                const student = await db.Student.findOne({ where: { userId } });
-                profile = {
-                    fullName: student?.fullName,
-                    DOB: student?.DOB,
-                    school: student?.school,
-                    parentPhoneNumber: student?.parentPhoneNumber,
-                    parentEmail: student?.parentEmail,
-                };
-                break;
-            }
-            default:
-                return res.status(403).json({ message: 'Role không hỗ trợ.' });
+        let profile;
+        if (role === 'STUDENT') {
+            profile = {
+                fullName: row?.fullName,
+                DOB: row?.DOB,
+                school: row?.school,
+                parentPhoneNumber: row?.parentPhoneNumber,
+                parentEmail: row?.parentEmail,
+            };
+        } else if (role === 'MANAGER') {
+            profile = { fullName: row?.fullName, phoneNumber: row?.phoneNumber, gradeLevel: row?.gradeLevel };
+        } else {
+            profile = { fullName: row?.fullName, phoneNumber: row?.phoneNumber };
         }
 
         return res.json({ email: user.email, role, ...profile });

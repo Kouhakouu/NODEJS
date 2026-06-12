@@ -272,59 +272,61 @@ const getClassStudents = async (req, res) => {
             content: l.lessonContent
         }));
 
-        // 2) Với mỗi student, lần lượt lấy performance cho từng session
-        const students = await Promise.all(
-            cls.students.map(async s => {
-                // build performance array
-                const performance = await Promise.all(
-                    sessions.map(async ss => {
-                        const p = await db.StudentPerformance.findOne({
-                            include: [
-                                {
-                                    model: db.Student,
-                                    through: {
-                                        model: db.StudentPerformanceStudent,
-                                        where: { studentId: s.id }
-                                    },
-                                    required: true,
-                                    attributes: []
-                                },
-                                {
-                                    model: db.Lesson,
-                                    through: {
-                                        model: db.StudentPerformanceLesson,
-                                        where: { lessonId: ss.id }
-                                    },
-                                    required: true,
-                                    attributes: []
-                                }
-                            ]
-                        });
+        // 2) Lấy toàn bộ performance của lớp bằng 1 query duy nhất
+        // (thay vì N học sinh x M buổi = N*M query findOne như trước)
+        const studentIds = cls.students.map(s => s.id);
+        const lessonIds = sessions.map(ss => ss.id);
 
-                        return {
-                            sessionId: ss.id,
-                            doneCount: p?.doneTask ?? 0,
-                            correctCount: p?.totalScore ?? 0,
-                            wrongTasks: Array.isArray(p?.incorrectTasks) ? p.incorrectTasks : [],
-                            missingTasks: Array.isArray(p?.missingTasks) ? p.missingTasks : [],
-                            presentation: p?.presentation ?? '',
-                            skills: p?.skills ?? ''
-                        };
-                    })
-                );
+        const performances = (studentIds.length > 0 && lessonIds.length > 0)
+            ? await db.StudentPerformance.findAll({
+                include: [
+                    {
+                        model: db.Student,
+                        where: { id: { [db.Sequelize.Op.in]: studentIds } },
+                        attributes: ['id'],
+                        through: { attributes: [] }
+                    },
+                    {
+                        model: db.Lesson,
+                        where: { id: { [db.Sequelize.Op.in]: lessonIds } },
+                        attributes: ['id'],
+                        through: { attributes: [] }
+                    }
+                ],
+                order: [['id', 'DESC']]
+            })
+            : [];
 
-                // trả về đầy đủ thông tin student + performance
+        // map "studentId_lessonId" -> performance; order DESC nên bản ghi mới nhất thắng
+        const perfMap = new Map();
+        for (const p of performances) {
+            const sid = p.Students?.[0]?.id;
+            const lid = p.Lessons?.[0]?.id;
+            if (sid == null || lid == null) continue;
+            const key = `${sid}_${lid}`;
+            if (!perfMap.has(key)) perfMap.set(key, p);
+        }
+
+        const students = cls.students.map(s => ({
+            id: s.id,
+            fullName: s.fullName,
+            DOB: s.DOB,
+            school: s.school,
+            parentPhoneNumber: s.parentPhoneNumber,
+            parentEmail: s.parentEmail,
+            performance: sessions.map(ss => {
+                const p = perfMap.get(`${s.id}_${ss.id}`);
                 return {
-                    id: s.id,
-                    fullName: s.fullName,
-                    DOB: s.DOB,
-                    school: s.school,
-                    parentPhoneNumber: s.parentPhoneNumber,
-                    parentEmail: s.parentEmail,
-                    performance
+                    sessionId: ss.id,
+                    doneCount: p?.doneTask ?? 0,
+                    correctCount: p?.totalScore ?? 0,
+                    wrongTasks: Array.isArray(p?.incorrectTasks) ? p.incorrectTasks : [],
+                    missingTasks: Array.isArray(p?.missingTasks) ? p.missingTasks : [],
+                    presentation: p?.presentation ?? '',
+                    skills: p?.skills ?? ''
                 };
             })
-        );
+        }));
 
         return res.json({
             id: cls.id,

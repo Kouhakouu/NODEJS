@@ -2,7 +2,7 @@ const bcrypt = require('bcrypt');
 const db = require('../models');
 const { safeStr, formatDateVN, jsonToText } = require("../utils/emailHelpers");
 // Lazy-load để cold start không phải nạp nodemailer/handlebars khi request không gửi mail
-const sendLessonResultEmail = (...args) => require("../services/emailService").sendLessonResultEmail(...args);
+const sendLessonResultEmailsBatch = (...args) => require("../services/emailService").sendLessonResultEmailsBatch(...args);
 const sendQuizSubmissionEmail = (...args) => require("../services/emailService").sendQuizSubmissionEmail(...args);
 const sendQuizResultEmail = (...args) => require("../services/emailService").sendQuizResultEmail(...args);
 
@@ -294,13 +294,11 @@ const getLessonDetail = async (req, res) => {
         const lessonId = parseInt(req.params.lessonId, 10);
         const classId = parseInt(req.params.classId, 10); // Lấy classId từ URL
 
-        // 1. Lấy thông tin lớp học (để lấy className - VD: 9D0A)
-        const classInfo = await db.Class.findByPk(classId, {
-            attributes: ['className'] // Chỉ cần lấy tên lớp
-        });
-
-        // 2. Lấy thông tin buổi học HIỆN TẠI
-        const currentLesson = await db.Lesson.findByPk(lessonId);
+        // 1+2. Thông tin lớp (lấy tên) + buổi học hiện tại: 2 query độc lập, chạy song song
+        const [classInfo, currentLesson] = await Promise.all([
+            db.Class.findByPk(classId, { attributes: ['className'] }),
+            db.Lesson.findByPk(lessonId)
+        ]);
 
         if (!currentLesson) {
             return res.status(404).json({ message: 'Lesson not found' });
@@ -383,9 +381,13 @@ const sendLessonResultsEmails = async (req, res) => {
         const classId = parseInt(req.params.classId, 10);
         const lessonId = parseInt(req.params.lessonId, 10);
 
-        // 1) Lấy lesson + check locked
-        const lesson = await db.Lesson.findByPk(lessonId);
+        // 1) Lấy lesson + class song song, rồi check locked
+        const [lesson, cls] = await Promise.all([
+            db.Lesson.findByPk(lessonId),
+            db.Class.findByPk(classId, { attributes: ["id", "className"] })
+        ]);
         if (!lesson) return res.status(404).json({ message: "Lesson not found" });
+        if (!cls) return res.status(404).json({ message: "Class not found" });
 
         if (!lesson.isLocked) {
             return res.status(400).json({
@@ -393,13 +395,47 @@ const sendLessonResultsEmails = async (req, res) => {
             });
         }
 
-        // 2) Lấy className + students từ snapshot Lesson_Students
-        const cls = await db.Class.findByPk(classId, { attributes: ["id", "className"] });
-        if (!cls) return res.status(404).json({ message: "Class not found" });
+        // 2-5) Snapshot học sinh, previous lesson và performance: 3 query độc lập, chạy song song
+        // (raw SQL phải quote identifier camelCase vì Postgres fold về chữ thường)
+        const [lessonStudentRows, previousLesson, [perfRows]] = await Promise.all([
+            db.LessonStudent.findAll({ where: { lessonId } }),
+            db.Lesson.findOne({
+                include: [{
+                    model: db.Class,
+                    where: { id: classId },
+                    attributes: [],
+                    through: { attributes: [] }
+                }],
+                where: {
+                    lessonDate: { [db.Sequelize.Op.lt]: lesson.lessonDate }
+                },
+                order: [["lessonDate", "DESC"]],
+            }),
+            db.sequelize.query(
+                `
+  SELECT
+    sp.id,
+    sp."doneTask",
+    sp."totalScore",
+    sp."incorrectTasks",
+    sp."missingTasks",
+    sp.presentation,
+    sp.skills,
+    sp.comment,
+    sps."studentId"
+  FROM "StudentPerformances" sp
+  INNER JOIN "StudentPerformance_Lessons" spl
+    ON spl."studentPerformanceId" = sp.id
+  INNER JOIN "StudentPerformance_Students" sps
+    ON sps."studentPerformanceId" = sp.id
+  WHERE spl."lessonId" = :lessonId
+  ORDER BY sp.id DESC
+  `,
+                { replacements: { lessonId } }
+            )
+        ]);
 
-        const lessonStudentRows = await db.LessonStudent.findAll({ where: { lessonId } });
         const lessonStudentIds = lessonStudentRows.map(r => r.studentId);
-
         const students = lessonStudentIds.length > 0
             ? await db.Student.findAll({
                 where: { id: { [db.Sequelize.Op.in]: lessonStudentIds } },
@@ -407,49 +443,10 @@ const sendLessonResultsEmails = async (req, res) => {
             })
             : [];
 
-        // 3) Lấy previous lesson của class (reuse logic getLessonDetail)
-        const previousLesson = await db.Lesson.findOne({
-            include: [{
-                model: db.Class,
-                where: { id: classId },
-                attributes: [],
-                through: { attributes: [] }
-            }],
-            where: {
-                lessonDate: { [db.Sequelize.Op.lt]: lesson.lessonDate }
-            },
-            order: [["lessonDate", "DESC"]],
-        });
-
         const previousLessonContent = previousLesson?.lessonContent || "Không có buổi học trước";
-        const previousHomeworkCount = previousLesson?.totalTaskLength ?? 0;
 
-        // 4) Attendance map từ lessonStudentRows đã fetch ở bước 2
+        // Attendance map từ lessonStudentRows
         const attendanceMap = new Map(lessonStudentRows.map(r => [r.studentId, r.attendance]));
-
-        // 5) Performance rows cho lessonId: dùng SQL raw để không phụ thuộc association
-        const [perfRows] = await db.sequelize.query(
-            `
-  SELECT
-    sp.id,
-    sp.doneTask,
-    sp.totalScore,
-    sp.incorrectTasks,
-    sp.missingTasks,
-    sp.presentation,
-    sp.skills,
-    sp.comment,
-    sps.studentId
-  FROM StudentPerformances sp
-  INNER JOIN StudentPerformance_Lessons spl
-    ON spl.studentPerformanceId = sp.id
-  INNER JOIN StudentPerformance_Students sps
-    ON sps.studentPerformanceId = sp.id
-  WHERE spl.lessonId = :lessonId
-  ORDER BY sp.id DESC
-  `,
-            { replacements: { lessonId } }
-        );
 
         // Map performance mới nhất theo studentId
         const perfByStudentId = new Map();
@@ -459,48 +456,54 @@ const sendLessonResultsEmails = async (req, res) => {
             }
         }
 
-        // 6) Send mails
+        // 6) Send mails: gửi song song trên 1 pool SMTP thay vì tuần tự từng email
         const subject = "[CMATH EDUCATION] ĐÁNH GIÁ KẾT QUẢ HỌC TẬP";
 
-        let sent = 0, failed = 0, skippedNoEmail = 0;
-        const errors = [];
+        let skippedNoEmail = 0;
+        const mailItems = [];
 
         for (const s of students) {
             const to = s.parentEmail;
             if (!to) { skippedNoEmail++; continue; }
 
             const perf = perfByStudentId.get(s.id) || null;
-            const attendance = attendanceMap.has(s.id) ? attendanceMap.get(s.id) : true;
 
-            const data = {
-                mail: to,
-                name: safeStr(s.fullName, "-"),
-                day: formatDateVN(lesson.lessonDate),
-                class: safeStr(cls.className, `Lớp ${classId}`),
-                content: safeStr(lesson.lessonContent, "Chưa cập nhật"),
-                comment: safeStr(perf?.comment, "-"),
+            mailItems.push({
+                to,
+                subject,
+                meta: { studentId: s.id, email: to },
+                data: {
+                    mail: to,
+                    name: safeStr(s.fullName, "-"),
+                    day: formatDateVN(lesson.lessonDate),
+                    class: safeStr(cls.className, `Lớp ${classId}`),
+                    content: safeStr(lesson.lessonContent, "Chưa cập nhật"),
+                    comment: safeStr(perf?.comment, "-"),
 
-                previousContent: safeStr(previousLessonContent, "-"),
-                totalTaskLength: safeStr(lesson.totalTaskLength ?? 0, "0"),
-                doneTask: safeStr(perf?.doneTask, "N/A"),
-                totalScore: safeStr(perf?.totalScore, "N/A"),
-                inCorrectTasks: jsonToText(perf?.incorrectTasks),
-                missingTasks: jsonToText(perf?.missingTasks),
-                presentation: safeStr(perf?.presentation, "-"),
-                skills: safeStr(perf?.skills, "-"),
-
-                // nếu bạn muốn add vào hbs:
-                // attendance: attendance ? "Có mặt" : "Vắng"
-            };
-
-            try {
-                await sendLessonResultEmail({ to, subject, data });
-                sent++;
-            } catch (e) {
-                failed++;
-                errors.push({ studentId: s.id, email: to, error: e.message });
-            }
+                    previousContent: safeStr(previousLessonContent, "-"),
+                    totalTaskLength: safeStr(lesson.totalTaskLength ?? 0, "0"),
+                    doneTask: safeStr(perf?.doneTask, "N/A"),
+                    totalScore: safeStr(perf?.totalScore, "N/A"),
+                    inCorrectTasks: jsonToText(perf?.incorrectTasks),
+                    missingTasks: jsonToText(perf?.missingTasks),
+                    presentation: safeStr(perf?.presentation, "-"),
+                    skills: safeStr(perf?.skills, "-"),
+                },
+            });
         }
+
+        const sendResults = await sendLessonResultEmailsBatch(mailItems);
+
+        let sent = 0, failed = 0;
+        const errors = [];
+        sendResults.forEach((r, i) => {
+            if (r.status === "fulfilled") {
+                sent++;
+            } else {
+                failed++;
+                errors.push({ ...mailItems[i].meta, error: r.reason?.message || "unknown error" });
+            }
+        });
 
         return res.status(200).json({
             message: "Đã xử lý gửi email kết quả buổi học.",
@@ -653,20 +656,23 @@ const getManagerDashboardStats = async (req, res) => {
 
         const classIds = classes.map(c => c.id);
 
-        const [studentCountRows] = await db.sequelize.query(
-            `SELECT COUNT(DISTINCT studentId) AS total FROM Student_Classes WHERE classId IN (:classIds)`,
-            { replacements: { classIds } }
-        );
+        // Lưu ý: Postgres fold identifier không quote về chữ thường nên mọi cột
+        // camelCase và tên bảng đều phải đặt trong dấu nháy kép.
+        const [[studentCountRows], [allLessonRows]] = await Promise.all([
+            db.sequelize.query(
+                `SELECT COUNT(DISTINCT "studentId") AS total FROM "Student_Classes" WHERE "classId" IN (:classIds)`,
+                { replacements: { classIds } }
+            ),
+            // Lấy tất cả buổi học của các lớp, sắp xếp mới nhất trước
+            db.sequelize.query(`
+                SELECT lc."classId", l.id AS "lessonId", l."lessonDate"
+                FROM "Lesson_Classes" lc
+                JOIN "Lessons" l ON l.id = lc."lessonId"
+                WHERE lc."classId" IN (:classIds)
+                ORDER BY l."lessonDate" DESC
+            `, { replacements: { classIds } })
+        ]);
         const totalStudents = parseInt(studentCountRows[0]?.total) || 0;
-
-        // Lấy tất cả buổi học của các lớp, sắp xếp mới nhất trước
-        const [allLessonRows] = await db.sequelize.query(`
-            SELECT lc.classId, l.id AS lessonId, l.lessonDate
-            FROM Lesson_Classes lc
-            JOIN Lessons l ON l.id = lc.lessonId
-            WHERE lc.classId IN (:classIds)
-            ORDER BY l.lessonDate DESC
-        `, { replacements: { classIds } });
 
         // Giữ lại 2 buổi học gần nhất của mỗi lớp
         const lessonsByClass = new Map();
@@ -679,27 +685,27 @@ const getManagerDashboardStats = async (req, res) => {
         const targetLessonIds = [...lessonsByClass.values()].flat().map(r => r.lessonId);
         if (targetLessonIds.length === 0) return res.status(200).json(empty(classes.length, totalStudents));
 
-        // Điểm danh theo buổi học và lớp
-        const [attendanceRows] = await db.sequelize.query(`
-            SELECT ls.lessonId, lc.classId,
-                COUNT(*) AS total,
-                SUM(CASE WHEN ls.attendance = 1 THEN 1.0 ELSE 0 END) AS present
-            FROM Lesson_Students ls
-            JOIN Lesson_Classes lc ON lc.lessonId = ls.lessonId
-            WHERE ls.lessonId IN (:lessonIds) AND lc.classId IN (:classIds)
-            GROUP BY ls.lessonId, lc.classId
-        `, { replacements: { lessonIds: targetLessonIds, classIds } });
-
-        // Điểm trung bình theo buổi học và lớp
-        const [scoreRows] = await db.sequelize.query(`
-            SELECT spl.lessonId, lc.classId,
-                AVG(CAST(sp.totalScore AS FLOAT)) AS avgScore
-            FROM StudentPerformance_Lessons spl
-            JOIN StudentPerformances sp ON sp.id = spl.studentPerformanceId
-            JOIN Lesson_Classes lc ON lc.lessonId = spl.lessonId
-            WHERE spl.lessonId IN (:lessonIds) AND lc.classId IN (:classIds)
-            GROUP BY spl.lessonId, lc.classId
-        `, { replacements: { lessonIds: targetLessonIds, classIds } });
+        // Điểm danh + điểm trung bình theo buổi học và lớp (2 query độc lập, chạy song song)
+        const [[attendanceRows], [scoreRows]] = await Promise.all([
+            db.sequelize.query(`
+                SELECT ls."lessonId", lc."classId",
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN ls.attendance THEN 1.0 ELSE 0 END) AS present
+                FROM "Lesson_Students" ls
+                JOIN "Lesson_Classes" lc ON lc."lessonId" = ls."lessonId"
+                WHERE ls."lessonId" IN (:lessonIds) AND lc."classId" IN (:classIds)
+                GROUP BY ls."lessonId", lc."classId"
+            `, { replacements: { lessonIds: targetLessonIds, classIds } }),
+            db.sequelize.query(`
+                SELECT spl."lessonId", lc."classId",
+                    AVG(CAST(sp."totalScore" AS FLOAT)) AS "avgScore"
+                FROM "StudentPerformance_Lessons" spl
+                JOIN "StudentPerformances" sp ON sp.id = spl."studentPerformanceId"
+                JOIN "Lesson_Classes" lc ON lc."lessonId" = spl."lessonId"
+                WHERE spl."lessonId" IN (:lessonIds) AND lc."classId" IN (:classIds)
+                GROUP BY spl."lessonId", lc."classId"
+            `, { replacements: { lessonIds: targetLessonIds, classIds } })
+        ]);
 
         const attendanceMap = new Map(
             attendanceRows.map(r => [`${r.classId}_${r.lessonId}`,

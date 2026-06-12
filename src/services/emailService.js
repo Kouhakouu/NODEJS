@@ -18,8 +18,8 @@ function getTemplate(templateName) {
     return compiled;
 }
 
-function createTransporter() {
-    return nodemailer.createTransport({
+function smtpConfig(extra = {}) {
+    return {
         host: process.env.SMTP_HOST,
         port: Number(process.env.SMTP_PORT),
         secure: process.env.SMTP_SECURE === "true",
@@ -27,7 +27,12 @@ function createTransporter() {
             user: process.env.SMTP_USER,
             pass: process.env.SMTP_PASS,
         },
-    });
+        ...extra,
+    };
+}
+
+function createTransporter() {
+    return nodemailer.createTransport(smtpConfig());
 }
 
 async function sendTemplatedEmail({ to, subject, templateName, data }) {
@@ -50,6 +55,37 @@ async function sendLessonResultEmail({ to, subject, data }) {
         templateName: "lesson-result",
         data,
     });
+}
+
+// Gửi nhiều email cùng template trên 1 transporter pool (tối đa 3 kết nối SMTP),
+// thay vì mở 1 kết nối mới cho từng email như sendTemplatedEmail.
+// items: [{ to, subject, data, meta }] -> trả về kết quả allSettled theo đúng thứ tự items.
+async function sendBatchTemplatedEmails({ items, templateName }) {
+    if (!items || items.length === 0) return [];
+
+    const template = getTemplate(templateName);
+    const transporter = nodemailer.createTransport(
+        smtpConfig({ pool: true, maxConnections: 3 })
+    );
+
+    try {
+        return await Promise.allSettled(
+            items.map(item =>
+                transporter.sendMail({
+                    from: process.env.MAIL_FROM || process.env.SMTP_USER,
+                    to: item.to,
+                    subject: item.subject,
+                    html: template(item.data),
+                })
+            )
+        );
+    } finally {
+        transporter.close();
+    }
+}
+
+async function sendLessonResultEmailsBatch(items) {
+    return sendBatchTemplatedEmails({ items, templateName: "lesson-result" });
 }
 
 async function sendQuizSubmissionEmail({ to, subject, data }) {
@@ -79,4 +115,4 @@ async function sendAssistantCodeEmail({ to, subject, data }) {
     });
 }
 
-module.exports = { sendLessonResultEmail, sendQuizSubmissionEmail, sendQuizResultEmail, sendAssistantCodeEmail };
+module.exports = { sendLessonResultEmail, sendLessonResultEmailsBatch, sendQuizSubmissionEmail, sendQuizResultEmail, sendAssistantCodeEmail };

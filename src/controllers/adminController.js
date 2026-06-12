@@ -1,4 +1,5 @@
 const db = require('../models');
+const { getClassCounts } = require('../utils/classCounts');
 
 const getAdminStats = async (req, res) => {
     try {
@@ -12,35 +13,24 @@ const getAdminStats = async (req, res) => {
                 db.Course.count({ where: { isPublished: true } }),
                 db.Class.findAll({
                     attributes: ['id', 'className', 'gradeLevel'],
-                    include: [
-                        {
-                            model: db.Student,
-                            as: 'students',
-                            attributes: ['id'],
-                            through: { attributes: [] }
-                        },
-                        {
-                            model: db.Lesson,
-                            as: 'lessons',
-                            attributes: ['id'],
-                            through: { attributes: [] }
-                        },
-                        {
-                            model: db.ClassSchedule,
-                            as: 'classSchedule',
-                            attributes: ['study_day', 'start_time', 'end_time'],
-                            required: false
-                        }
-                    ]
+                    include: [{
+                        model: db.ClassSchedule,
+                        as: 'classSchedule',
+                        attributes: ['study_day', 'start_time', 'end_time'],
+                        required: false
+                    }]
                 })
             ]);
+
+        // Sĩ số / số buổi đếm bằng 2 query GROUP BY, không join students + lessons cùng lúc
+        const { studentCounts, lessonCounts } = await getClassCounts(classes.map(c => c.id));
 
         const classSummaries = classes.map(c => ({
             id: c.id,
             className: c.className,
             gradeLevel: c.gradeLevel,
-            studentsCount: c.students?.length ?? 0,
-            lessonsCount: c.lessons?.length ?? 0,
+            studentsCount: studentCounts.get(c.id) ?? 0,
+            lessonsCount: lessonCounts.get(c.id) ?? 0,
             hasSchedule: !!c.classSchedule,
             schedule: c.classSchedule
                 ? {

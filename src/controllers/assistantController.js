@@ -1,6 +1,7 @@
 const bcrypt = require('bcrypt');
 import db from '../models/index';
 import CRUDservice from '../services/CRUDservice';
+import { getClassCounts } from '../utils/classCounts';
 // Lazy-load để cold start không phải nạp SDK AI / nodemailer khi request không dùng đến
 const aiService = {
     generateComment: (...args) => require('../services/aiService').generateComment(...args)
@@ -210,30 +211,19 @@ const getAssistantClasses = async (req, res) => {
     try {
         const assistantId = req.user.userId;
 
-        // Tìm trợ giảng & lấy kèm các lớp + lịch + sĩ số + số bài
+        // Tìm trợ giảng & lấy kèm các lớp + lịch.
+        // Sĩ số / số buổi đếm riêng bằng getClassCounts để tránh join tích Descartes.
         const assistant = await db.Assistant.findByPk(assistantId, {
             include: [{
                 model: db.Class,
                 as: 'classes',
                 attributes: ['id', 'className', 'gradeLevel'],
                 through: { attributes: [] },
-                include: [
-                    {                             // lịch học
-                        model: db.ClassSchedule,
-                        as: 'classSchedule',
-                        attributes: ['study_day', 'start_time', 'end_time']
-                    },
-                    {                             // để đếm sĩ số
-                        model: db.Student,
-                        as: 'students',
-                        attributes: ['id']
-                    },
-                    {                             // để đếm bài / buổi
-                        model: db.Lesson,
-                        as: 'lessons',
-                        attributes: ['id']
-                    }
-                ]
+                include: [{
+                    model: db.ClassSchedule,
+                    as: 'classSchedule',
+                    attributes: ['study_day', 'start_time', 'end_time']
+                }]
             }]
         });
 
@@ -241,13 +231,15 @@ const getAssistantClasses = async (req, res) => {
             return res.status(404).json({ message: 'Assistant not found' });
         }
 
+        const { studentCounts, lessonCounts } = await getClassCounts(assistant.classes.map(c => c.id));
+
         // Chuyển lớp về dạng gọn gửi cho FE
         const result = assistant.classes.map(c => ({
             id: c.id,
             className: c.className,
             gradeLevel: c.gradeLevel,
-            studentsCount: c.students?.length ?? 0,
-            assignmentsCount: c.lessons?.length ?? 0,
+            studentsCount: studentCounts.get(c.id) ?? 0,
+            assignmentsCount: lessonCounts.get(c.id) ?? 0,
             schedule: c.classSchedule           // null nếu chưa có
                 ? {
                     study_day: c.classSchedule.study_day,
@@ -347,35 +339,35 @@ const getLessonStudentsPerformance = async (req, res) => {
 
         const studentIds = lessonStudentRows.map(ls => ls.studentId);
 
-        // Lấy thông tin chi tiết học sinh
-        const students = await db.Student.findAll({
-            where: { id: { [db.Sequelize.Op.in]: studentIds } },
-            attributes: ['id', 'fullName', 'school', 'parentPhoneNumber', 'parentEmail']
-        });
-
         // Map attendance theo studentId
         const lessonStudentMap = {};
         lessonStudentRows.forEach(ls => {
             lessonStudentMap[ls.studentId] = ls;
         });
 
-        // Truy vấn StudentPerformance cho buổi học này
-        const performances = await db.StudentPerformance.findAll({
-            include: [
-                {
-                    model: db.Lesson,
-                    where: { id: lessonId },
-                    attributes: [],
-                    through: { attributes: [] }
-                },
-                {
-                    model: db.Student,
-                    where: { id: { [db.Sequelize.Op.in]: studentIds } },
-                    attributes: ['id'],
-                    through: { attributes: [] }
-                }
-            ]
-        });
+        // Thông tin học sinh + StudentPerformance: 2 query độc lập, chạy song song
+        const [students, performances] = await Promise.all([
+            db.Student.findAll({
+                where: { id: { [db.Sequelize.Op.in]: studentIds } },
+                attributes: ['id', 'fullName', 'school', 'parentPhoneNumber', 'parentEmail']
+            }),
+            db.StudentPerformance.findAll({
+                include: [
+                    {
+                        model: db.Lesson,
+                        where: { id: lessonId },
+                        attributes: [],
+                        through: { attributes: [] }
+                    },
+                    {
+                        model: db.Student,
+                        where: { id: { [db.Sequelize.Op.in]: studentIds } },
+                        attributes: ['id'],
+                        through: { attributes: [] }
+                    }
+                ]
+            })
+        ]);
 
         const performanceMap = {};
         performances.forEach(perf => {
@@ -419,13 +411,14 @@ const getLessonStudentsPerformance = async (req, res) => {
 const postSaveStudentPerformance = async (req, res) => {
     const { studentId, lessonId, performance } = req.body;
 
-    const checkLesson = await db.Lesson.findByPk(lessonId);
-    if (checkLesson && checkLesson.isLocked) {
-        return res.status(403).json({ message: 'Buổi học đã bị chốt kết quả, không thể chỉnh sửa điểm số!' });
-    }
-
+    // Validate input trước, rồi mới query DB
     if (!studentId || !lessonId || !performance) {
         return res.status(400).json({ message: 'Student ID, Lesson ID và dữ liệu performance là bắt buộc.' });
+    }
+
+    const checkLesson = await db.Lesson.findByPk(lessonId, { attributes: ['id', 'isLocked'] });
+    if (checkLesson && checkLesson.isLocked) {
+        return res.status(403).json({ message: 'Buổi học đã bị chốt kết quả, không thể chỉnh sửa điểm số!' });
     }
     const { doneTask, totalScore, incorrectTasks, missingTasks, presentation, skills, comment } = performance;
 
