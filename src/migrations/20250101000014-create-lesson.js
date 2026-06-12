@@ -15,14 +15,14 @@ module.exports = {
             totalTaskLength: {
                 type: Sequelize.INTEGER,
                 allowNull: false,
-                defaultValue: 0 // <--- THÊM DÒNG NÀY
+                defaultValue: 0
             },
             lessonDate: {
                 type: Sequelize.DATE,
                 allowNull: false
             },
             homeworkList: {
-                type: Sequelize.TEXT, // <--- ĐỔI THÀNH TEXT để lưu được nhiều bài tập hơn
+                type: Sequelize.STRING,
                 allowNull: true
             },
             isLocked: {

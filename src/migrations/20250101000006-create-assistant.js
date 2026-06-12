@@ -1,8 +1,7 @@
-// migrations/20250422110100-create-admins.js
 'use strict';
 module.exports = {
     async up(queryInterface, Sequelize) {
-        await queryInterface.createTable('Admins', {
+        await queryInterface.createTable('Assistants', {
             userId: {
                 type: Sequelize.INTEGER,
                 primaryKey: true,
@@ -15,23 +14,20 @@ module.exports = {
                 type: Sequelize.STRING,
                 allowNull: false,
             },
-            phoneNumber: {
-                type: Sequelize.STRING,
-                allowNull: false,
-            },
+            phoneNumber: { type: Sequelize.STRING },
             createdAt: {
                 type: Sequelize.DATE,
                 allowNull: false,
-                defaultValue: Sequelize.literal('GETDATE()'),
+                defaultValue: Sequelize.literal('NOW()'),
             },
             updatedAt: {
                 type: Sequelize.DATE,
                 allowNull: false,
-                defaultValue: Sequelize.literal('GETDATE()'),
+                defaultValue: Sequelize.literal('NOW()'),
             },
         });
     },
     async down(queryInterface) {
-        await queryInterface.dropTable('Admins');
+        await queryInterface.dropTable('Assistants');
     },
 };

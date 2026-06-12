@@ -1,8 +1,7 @@
-// migrations/20250422110200-create-assistants.js
 'use strict';
 module.exports = {
     async up(queryInterface, Sequelize) {
-        await queryInterface.createTable('Assistants', {
+        await queryInterface.createTable('Managers', {
             userId: {
                 type: Sequelize.INTEGER,
                 primaryKey: true,
@@ -16,19 +15,20 @@ module.exports = {
                 allowNull: false,
             },
             phoneNumber: { type: Sequelize.STRING },
+            gradeLevel: { type: Sequelize.STRING },
             createdAt: {
                 type: Sequelize.DATE,
                 allowNull: false,
-                defaultValue: Sequelize.literal('GETDATE()'),
+                defaultValue: Sequelize.literal('NOW()'),
             },
             updatedAt: {
                 type: Sequelize.DATE,
                 allowNull: false,
-                defaultValue: Sequelize.literal('GETDATE()'),
+                defaultValue: Sequelize.literal('NOW()'),
             },
         });
     },
     async down(queryInterface) {
-        await queryInterface.dropTable('Assistants');
+        await queryInterface.dropTable('Managers');
     },
 };

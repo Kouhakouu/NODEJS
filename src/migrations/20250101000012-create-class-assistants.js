@@ -1,9 +1,13 @@
-// migrations/20230101000000-create-class-assistants.js
-
 'use strict';
 module.exports = {
   up: async (queryInterface, Sequelize) => {
     await queryInterface.createTable('Class_Assistants', {
+      id: {
+        allowNull: false,
+        autoIncrement: true,
+        primaryKey: true,
+        type: Sequelize.INTEGER
+      },
       classId: {
         allowNull: false,
         type: Sequelize.INTEGER,
@@ -11,8 +15,7 @@ module.exports = {
           model: 'Classes',
           key: 'id'
         },
-        onDelete: 'CASCADE',
-        primaryKey: true
+        onDelete: 'CASCADE'
       },
       assistantId: {
         allowNull: false,
@@ -21,8 +24,7 @@ module.exports = {
           model: 'Assistants',
           key: 'userId'
         },
-        onDelete: 'CASCADE',
-        primaryKey: true
+        onDelete: 'CASCADE'
       }
     });
   },

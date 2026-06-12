@@ -9,6 +9,7 @@ import studentController from "../controllers/studentController";
 import courseController from "../controllers/courseController";
 import profileController from "../controllers/profileController";
 import adminController from "../controllers/adminController";
+import documentController from "../controllers/documentController";
 import { authMiddleware } from "../services/authMiddleware";
 
 let router = express.Router();
@@ -63,6 +64,11 @@ let initWebRoutes = (app) => {
     router.post("/create-course", authMiddleware, teacherController.createCourse);
     router.get('/teacher/classes', authMiddleware, teacherController.getTeacherClasses);
     router.get('/teacher/classes/:id', authMiddleware, teacherController.getClassStudents);
+
+    //tài liệu giáo viên
+    router.get('/teacher/documents', authMiddleware, documentController.getDocuments);
+    router.post('/teacher/documents', authMiddleware, documentController.upload.single('file'), documentController.uploadDocument);
+    router.delete('/teacher/documents/:id', authMiddleware, documentController.deleteDocument);
 
     //trang trợ giảng
     router.get('/assistant/classes', authMiddleware, assistantController.getAssistantClasses);

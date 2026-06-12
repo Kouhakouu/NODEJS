@@ -1,4 +1,4 @@
-// migrations/20250422-create-roles.js
+'use strict';
 module.exports = {
     up: async (queryInterface, Sequelize) => {
         await queryInterface.createTable('Roles', {
@@ -21,7 +21,6 @@ module.exports = {
             { roleName: 'TEACHER', createdAt: new Date(), updatedAt: new Date() },
             { roleName: 'MANAGER', createdAt: new Date(), updatedAt: new Date() },
             { roleName: 'ASSISTANT', createdAt: new Date(), updatedAt: new Date() },
-            // ---> THÊM ROLE STUDENT VÀO ĐÂY <---
             { roleName: 'STUDENT', createdAt: new Date(), updatedAt: new Date() }
         ]);
     },

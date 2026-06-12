@@ -1,4 +1,4 @@
-// migrations/20250422-create-users.js
+'use strict';
 module.exports = {
     up: async (queryInterface, Sequelize) => {
         await queryInterface.createTable('Users', {

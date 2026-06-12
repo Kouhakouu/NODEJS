@@ -12,11 +12,11 @@ module.exports = {
                 type: Sequelize.INTEGER,
                 allowNull: true,
                 references: {
-                    model: 'Users', // Trỏ đến bảng Users
-                    key: 'userId'   // Trỏ đến cột userId của bảng Users
+                    model: 'Users',
+                    key: 'userId'
                 },
                 onUpdate: 'CASCADE',
-                onDelete: 'SET NULL' // Nếu xoá User thì Student giữ lại data cá nhân, chỉ set userId = null
+                onDelete: 'SET NULL'
             },
             fullName: {
                 type: Sequelize.STRING,

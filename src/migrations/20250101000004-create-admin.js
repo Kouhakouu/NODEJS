@@ -1,8 +1,7 @@
-// migrations/20250422110400-create-managers.js
 'use strict';
 module.exports = {
     async up(queryInterface, Sequelize) {
-        await queryInterface.createTable('Managers', {
+        await queryInterface.createTable('Admins', {
             userId: {
                 type: Sequelize.INTEGER,
                 primaryKey: true,
@@ -15,21 +14,23 @@ module.exports = {
                 type: Sequelize.STRING,
                 allowNull: false,
             },
-            phoneNumber: { type: Sequelize.STRING },
-            gradeLevel: { type: Sequelize.STRING },
+            phoneNumber: {
+                type: Sequelize.STRING,
+                allowNull: false,
+            },
             createdAt: {
                 type: Sequelize.DATE,
                 allowNull: false,
-                defaultValue: Sequelize.literal('GETDATE()'),
+                defaultValue: Sequelize.literal('NOW()'),
             },
             updatedAt: {
                 type: Sequelize.DATE,
                 allowNull: false,
-                defaultValue: Sequelize.literal('GETDATE()'),
+                defaultValue: Sequelize.literal('NOW()'),
             },
         });
     },
     async down(queryInterface) {
-        await queryInterface.dropTable('Managers');
+        await queryInterface.dropTable('Admins');
     },
 };

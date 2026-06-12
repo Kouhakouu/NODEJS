@@ -17,12 +17,14 @@ module.exports = {
                 allowNull: false
             },
             incorrectTasks: {
-                type: Sequelize.TEXT('long'),
-                allowNull: true
+                type: Sequelize.JSON,
+                allowNull: true,
+                defaultValue: []
             },
             missingTasks: {
-                type: Sequelize.TEXT('long'),
-                allowNull: true
+                type: Sequelize.JSON,
+                allowNull: true,
+                defaultValue: []
             },
             presentation: {
                 type: Sequelize.STRING,

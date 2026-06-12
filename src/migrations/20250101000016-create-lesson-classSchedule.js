@@ -1,7 +1,7 @@
 'use strict';
 module.exports = {
     up: async (queryInterface, Sequelize) => {
-        await queryInterface.createTable('Lesson_Classes', {
+        await queryInterface.createTable('Lesson_ClassSchedules', {
             lessonId: {
                 type: Sequelize.INTEGER,
                 allowNull: false,
@@ -12,12 +12,12 @@ module.exports = {
                 },
                 onDelete: 'CASCADE'
             },
-            classId: {
+            classScheduleId: {
                 type: Sequelize.INTEGER,
                 allowNull: false,
                 primaryKey: true,
                 references: {
-                    model: 'Classes', // bảng Classes cần được định nghĩa
+                    model: 'ClassSchedules',
                     key: 'id'
                 },
                 onDelete: 'CASCADE'
@@ -25,6 +25,6 @@ module.exports = {
         });
     },
     down: async (queryInterface, Sequelize) => {
-        await queryInterface.dropTable('Lesson_Classes');
+        await queryInterface.dropTable('Lesson_ClassSchedules');
     }
 };

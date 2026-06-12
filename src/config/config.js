@@ -1,33 +1,24 @@
 require('dotenv').config({ override: true });
-const tedious = require('tedious');
 
 module.exports = {
   development: {
-    username: 'root',
-    password: '14102004',
-    database: 'phongbui',
-    host: 'localhost',
-    dialect: "mssql",
-    dialectModule: tedious,
+    use_env_variable: 'DATABASE_URL',
+    dialect: "postgres",
     dialectOptions: {
-      options: {
-        encrypt: true,
-        trustServerCertificate: true
+      ssl: {
+        require: true,
+        rejectUnauthorized: false
       }
     },
     logging: false
   },
   production: {
-    username: process.env.username,
-    password: process.env.password,
-    database: process.env.database,
-    host: process.env.host,
-    dialect: "mssql",
-    dialectModule: tedious,
+    use_env_variable: 'DATABASE_URL',
+    dialect: "postgres",
     dialectOptions: {
-      options: {
-        encrypt: true,
-        trustServerCertificate: true
+      ssl: {
+        require: true,
+        rejectUnauthorized: false
       }
     },
     logging: false
