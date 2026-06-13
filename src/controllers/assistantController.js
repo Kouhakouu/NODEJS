@@ -15,7 +15,8 @@ const isValidEmail = (s) => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$
 const QUIZ_ANSWER_KEY = {
     q1: 'c', q2: 'd', q3: 'b', q4: 'c', q5: 'b', q6: 'c', q7: 'b', q8: 'c',
     q9: 'a', q10: 'c', q11: 'b', q12: 'c', q13: 'b', q14: 'b', q15: 'b',
-    q16: 'c', q17: 'c', q18: 'a', q19: 'b', q20: 'b', q21: 'd', q22: 'c', q23: 'c'
+    q16: 'c', q17: 'c', q18: 'a', q19: 'b', q20: 'b', q21: 'd', q22: 'c',
+    q23: 'c', q24: 'c', q25: 'b'
 };
 // Số câu đúng tối thiểu để được cấp mã kích hoạt
 const QUIZ_PASS_THRESHOLD = 20;
