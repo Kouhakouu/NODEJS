@@ -124,7 +124,7 @@ const postDeleteClassAssistantCRUD = async (req, res) => {
 };
 
 let postAssistantDeleteCRUD = async (req, res) => {
-    const { id } = req.body;
+    const { id } = req.params;
     if (!id) {
         return res.status(400).json({ message: 'Assistant ID is required.' });
     }

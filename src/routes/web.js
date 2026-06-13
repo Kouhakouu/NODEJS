@@ -53,7 +53,7 @@ let initWebRoutes = (app) => {
     router.delete("/class-delete-crud/:id", adminOnly, classController.deleteClass);
     router.post("/class-assistant-post-crud", adminOrManager, assistantController.postClassAssistantCRUD);
     router.post("/delete-class-assistant-crud", adminOrManager, assistantController.postDeleteClassAssistantCRUD);
-    router.post("/assistant-delete-crud", adminOnly, assistantController.postAssistantDeleteCRUD);
+    router.delete("/assistant-delete-crud/:id", adminOnly, assistantController.postAssistantDeleteCRUD);
     router.put("/assistant-update-crud/:id", adminOnly, assistantController.updateAssistant);
 
     router.get("/get-schedules", adminOnly, scheduleController.getSchedules);
