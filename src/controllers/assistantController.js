@@ -10,6 +10,26 @@ const sendAssistantCodeEmail = (...args) => require('../services/emailService').
 
 const isValidEmail = (s) => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 
+// Đáp án chuẩn bài test nội quy trợ giảng (đồng bộ với REACTJS/src/app/quiz/page.tsx).
+// Chấm ở server để không bypass được bằng cách gọi thẳng API.
+const QUIZ_ANSWER_KEY = {
+    q1: 'c', q2: 'd', q3: 'b', q4: 'c', q5: 'b', q6: 'c', q7: 'b', q8: 'c',
+    q9: 'a', q10: 'c', q11: 'b', q12: 'c', q13: 'b', q14: 'b', q15: 'b',
+    q16: 'c', q17: 'c', q18: 'a', q19: 'b', q20: 'b', q21: 'd', q22: 'c', q23: 'c'
+};
+// Số câu đúng tối thiểu để được cấp mã kích hoạt
+const QUIZ_PASS_THRESHOLD = 20;
+
+// Đếm số câu trả lời đúng từ answers gửi lên ({ q1: 'c', q2: 'd', ... })
+const scoreQuiz = (answers) => {
+    if (!answers || typeof answers !== 'object') return 0;
+    let correct = 0;
+    for (const [questionId, correctOptionId] of Object.entries(QUIZ_ANSWER_KEY)) {
+        if (answers[questionId] === correctOptionId) correct += 1;
+    }
+    return correct;
+};
+
 // Trang admin: lấy thông tin trợ giảng kèm lớp
 const getAssistantInfo = async (req, res) => {
     try {
@@ -144,7 +164,7 @@ const requestVerificationCode = async (req, res) => {
             return res.status(403).json({ message: 'Chỉ trợ giảng mới có thể thực hiện thao tác này.' });
         }
 
-        const { email } = req.body;
+        const { email, answers } = req.body;
         if (!isValidEmail(email)) {
             return res.status(400).json({ message: 'Vui lòng nhập email hợp lệ để nhận mã.' });
         }
@@ -155,6 +175,19 @@ const requestVerificationCode = async (req, res) => {
         }
         if (assistant.status === 1) {
             return res.status(400).json({ message: 'Tài khoản đã được kích hoạt, không cần nhập mã.' });
+        }
+
+        // Chấm bài test: phải đúng tối thiểu QUIZ_PASS_THRESHOLD câu mới được cấp mã
+        const totalQuestions = Object.keys(QUIZ_ANSWER_KEY).length;
+        const correctCount = scoreQuiz(answers);
+        if (correctCount < QUIZ_PASS_THRESHOLD) {
+            return res.status(400).json({
+                message: `Bạn mới trả lời đúng ${correctCount}/${totalQuestions} câu. Cần đúng tối thiểu ${QUIZ_PASS_THRESHOLD} câu để nhận mã kích hoạt. Vui lòng xem lại và làm lại bài test.`,
+                correctCount,
+                totalQuestions,
+                passThreshold: QUIZ_PASS_THRESHOLD,
+                passed: false
+            });
         }
 
         // Sinh mã 6 chữ số, lưu lại để đối chiếu
