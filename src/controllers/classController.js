@@ -3,8 +3,10 @@ import db from '../models';
 
 const formatTime = time => {
     if (!time) return null;
-    const d = new Date(time);
-    return d.toISOString().substr(11, 5);
+    if (time instanceof Date) {
+        return time.toISOString().substr(11, 5);
+    }
+    return String(time).substring(0, 5);
 };
 
 // GET /get-class-info
