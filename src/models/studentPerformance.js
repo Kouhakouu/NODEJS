@@ -26,7 +26,9 @@ module.exports = (sequelize, DataTypes) => {
             allowNull: false
         },
         totalScore: {
-            type: DataTypes.INTEGER,
+            // FLOAT chứ không phải INTEGER: tổng điểm là tổng các điểm thành phần
+            // 0 / 0.25 / 0.5 / 0.75 / 1 nên có thể là số thập phân (vd 1.5).
+            type: DataTypes.FLOAT,
             allowNull: false
         },
         incorrectTasks: {
