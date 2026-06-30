@@ -1,51 +1,69 @@
 # PROJECT1
 
 ## Overview
-This project is a Node.js application that requires configuration and setup of SQL Server Management.
+This backend project is built for use together with the React frontend repository at https://github.com/Kouhakouu/REACTJS. It uses Neon PostgreSQL as its database and connects through the `DATABASE_URL` environment variable.
+
+## Prerequisites
+- Node.js 18 or higher
+- npm
+- A Neon database account
+- The React frontend repository cloned locally
 
 ## Configuration
-To configure the application, you need to set up the `config.json` file located in the root directory. Below is an example of what the `config.json` file should look like:
+Create a `.env` file in the project root with your Neon connection string:
 
-```json
-{
-    "database": {
-        "host": "localhost",
-        "port": 1433,
-        "user": "your_username",
-        "password": "your_password",
-        "database": "your_database"
-    }
-}
+```env
+DATABASE_URL=postgres://<user>:<password>@<host>/<database>?sslmode=require
+PORT=8000
 ```
 
-Make sure to replace `your_username`, `your_password`, and `your_database` with your actual database credentials.
+## Installation and Running
 
-## Installation
+### 1. Clone both projects
+```sh
+git clone https://github.com/Kouhakouu/REACTJS
 
-### Prerequisites
-- Node.js (v14 or higher)
-- SQL Server Management Studio (SSMS)
+git clone <this-backend-repo-url>
+```
 
-### Steps
+### 2. Install backend dependencies
+```sh
+cd NODEJS
+npm install
+```
 
-1. **Install dependencies:**
-     ```sh
-     npm install
-     ```
+### 3. Configure the backend
+- Create the `.env` file as shown in `.env.example`.
+- Make sure your Neon database is created and reachable.
+- If needed, run the migration files in the `src/migrations` folder.
 
-2. **Set up SQL Server Management Studio:**
-     - Download and install SQL Server Management Studio from the [official website](https://docs.microsoft.com/en-us/sql/ssms/download-sql-server-management-studio-ssms).
-     - Open SSMS and connect to your SQL Server instance.
-     - Create a new database or use an existing one.
-     - Update the `config.json` file with your database details.
+### 4. Start the backend
+```sh
+npm start
+```
 
-3. **Run the application:**
-     ```sh
-     npm start
-     ```
+The backend will run on `http://localhost:8000`.
+
+### 5. Configure and start the React frontend
+In the React project folder:
+```sh
+npm install
+```
+
+Set the frontend API base URL to the backend URL, for example:
+```env
+NEXT_PUBLIC_BACKEND_PORT=http://localhost:8000
+```
+
+Then start the frontend:
+```sh
+npm run dev
+```
+
+The frontend should open on `http://localhost:3000`.
 
 ## Usage
-After starting the application with REACTJS folder, it should be accessible at `http://localhost:3000`.
+After both services are running, the frontend will communicate with this backend through `http://localhost:8000`.
 
 ## License
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
