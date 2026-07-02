@@ -109,7 +109,10 @@ let initWebRoutes = (app) => {
     //trang quản lý
     router.get('/manager/dashboard-stats', managerOnly, managerController.getManagerDashboardStats);
     router.get('/manager/classes', managerOnly, managerController.getManagerClasses);
-    router.get('/manager/students/:id', managerOnly, assistantController.getClassStudentDetail);
+    router.get('/manager/students/:id', managerOnly, managerController.getClassStudents);
+    router.get('/manager/classes/:classId/available-students', managerOnly, managerController.getManagerAvailableStudents);
+    router.post('/manager/classes/:classId/students', managerOnly, managerController.addManagerClassStudent);
+    router.delete('/manager/classes/:classId/students/:studentId', managerOnly, managerController.removeManagerClassStudent);
     router.post('/createLesson', managerOnly, managerController.createLesson);
     router.get('/manager/classes/:id/lessons', managerOnly, assistantController.getAssistantLessons);
     router.get('/manager/classes/:id/lessons/:lessonId/students-performance', managerOnly, assistantController.getLessonStudentsPerformance);

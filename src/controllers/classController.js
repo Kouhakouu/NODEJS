@@ -12,7 +12,17 @@ const formatTime = time => {
 // GET /get-class-info
 export const getClassInfo = async (req, res) => {
     try {
+        let where = {};
+        if (req.user?.role === 'MANAGER') {
+            const manager = await db.Manager.findByPk(req.user.userId, {
+                attributes: ['gradeLevel']
+            });
+            if (!manager) return res.status(404).json({ message: 'Manager not found' });
+            where.gradeLevel = manager.gradeLevel;
+        }
+
         const classes = await db.Class.findAll({
+            where,
             attributes: ['id', 'className', 'gradeLevel', 'class_schedule_id'],
             include: [
                 {

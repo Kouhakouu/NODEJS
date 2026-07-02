@@ -10,6 +10,37 @@ const sendAssistantCodeEmail = (...args) => require('../services/emailService').
 
 const isValidEmail = (s) => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 
+const getManagerGradeLevel = async (managerId) => {
+    const manager = await db.Manager.findByPk(managerId, { attributes: ['gradeLevel'] });
+    if (!manager) {
+        const error = new Error('Manager not found.');
+        error.statusCode = 404;
+        throw error;
+    }
+    return manager.gradeLevel;
+};
+
+const ensureManagerCanManageClass = async (req, classId) => {
+    if (req.user?.role !== 'MANAGER') return;
+
+    const gradeLevel = await getManagerGradeLevel(req.user.userId);
+    const classroom = await db.Class.findOne({
+        where: { id: classId, gradeLevel },
+        attributes: ['id']
+    });
+
+    if (!classroom) {
+        const error = new Error('Bạn chỉ có thể phân công trợ giảng cho lớp thuộc khối mình quản lý.');
+        error.statusCode = 403;
+        throw error;
+    }
+};
+
+const sendControllerError = (res, error, fallbackMessage) => {
+    const statusCode = error.statusCode || 500;
+    return res.status(statusCode).json({ message: error.message || fallbackMessage });
+};
+
 // Đáp án chuẩn bài test nội quy trợ giảng (đồng bộ với REACTJS/src/app/quiz/page.tsx).
 // Chấm ở server để không bypass được bằng cách gọi thẳng API.
 const QUIZ_ANSWER_KEY = {
@@ -62,7 +93,7 @@ const getAssistantInfo = async (req, res) => {
         return res.status(200).json(result);
     } catch (error) {
         console.error('getAssistantInfo error:', error);
-        return res.status(500).json({ message: 'Error fetching assistant data.' });
+        return sendControllerError(res, error, 'Error fetching assistant data.');
     }
 };
 
@@ -102,11 +133,12 @@ const postClassAssistantCRUD = async (req, res) => {
         return res.status(400).json({ message: 'Class ID and Assistant ID are required.' });
     }
     try {
+        await ensureManagerCanManageClass(req, classId);
         let result = await CRUDservice.createClassAssistant({ classId, assistantId });
         return res.status(200).json({ message: result });
     } catch (e) {
         console.error(e);
-        return res.status(500).json({ message: e.message || 'Error assigning class to assistant.' });
+        return sendControllerError(res, e, 'Error assigning class to assistant.');
     }
 };
 
@@ -116,11 +148,12 @@ const postDeleteClassAssistantCRUD = async (req, res) => {
         return res.status(400).json({ message: 'Class ID and Assistant ID are required.' });
     }
     try {
+        await ensureManagerCanManageClass(req, classId);
         let result = await CRUDservice.deleteClassAssistant({ classId, assistantId });
         return res.status(200).json({ message: result });
     } catch (e) {
         console.error(e);
-        return res.status(500).json({ message: e.message || 'Error removing class from assistant.' });
+        return sendControllerError(res, e, 'Error removing class from assistant.');
     }
 };
 

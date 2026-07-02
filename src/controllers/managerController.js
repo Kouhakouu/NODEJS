@@ -6,6 +6,36 @@ const sendLessonResultEmailsBatch = (...args) => require("../services/emailServi
 const sendQuizSubmissionEmail = (...args) => require("../services/emailService").sendQuizSubmissionEmail(...args);
 const sendQuizResultEmail = (...args) => require("../services/emailService").sendQuizResultEmail(...args);
 
+const getManagedClass = async (managerId, classId, options = {}) => {
+    const manager = await db.Manager.findByPk(managerId, {
+        attributes: ['gradeLevel'],
+        transaction: options.transaction
+    });
+    if (!manager) {
+        const error = new Error('Manager not found');
+        error.statusCode = 404;
+        throw error;
+    }
+
+    const classroom = await db.Class.findOne({
+        where: { id: classId, gradeLevel: manager.gradeLevel },
+        attributes: ['id', 'className', 'gradeLevel'],
+        transaction: options.transaction
+    });
+    if (!classroom) {
+        const error = new Error('Class not found in manager grade');
+        error.statusCode = 404;
+        throw error;
+    }
+
+    return { manager, classroom };
+};
+
+const sendControllerError = (res, error, fallbackMessage) => {
+    const statusCode = error.statusCode || 500;
+    return res.status(statusCode).json({ message: error.message || fallbackMessage });
+};
+
 // Lấy thông tin tất cả các manager kèm email từ User
 const getManagerInfo = async (req, res) => {
     try {
@@ -234,6 +264,7 @@ const createLesson = async (req, res) => {
 const getClassStudents = async (req, res) => {
     try {
         const classId = parseInt(req.params.id, 10);
+        await getManagedClass(req.user.userId, classId);
         // Lấy lớp và include students qua quan hệ many-to-many
         const cls = await db.Class.findByPk(classId, {
             attributes: ['id', 'className'],
@@ -263,7 +294,189 @@ const getClassStudents = async (req, res) => {
         });
     } catch (error) {
         console.error('getClassStudents error:', error);
-        return res.status(500).json({ error: 'Internal server error' });
+        return sendControllerError(res, error, 'Internal server error');
+    }
+};
+
+const getManagerAvailableStudents = async (req, res) => {
+    try {
+        const classId = parseInt(req.params.classId, 10);
+        if (!classId) {
+            return res.status(400).json({ message: 'classId is required' });
+        }
+
+        await getManagedClass(req.user.userId, classId);
+
+        const assignedRows = await db.Student_Classes.findAll({
+            where: { classId },
+            attributes: ['studentId']
+        });
+        const assignedStudentIds = assignedRows.map(row => row.studentId);
+        const where = assignedStudentIds.length > 0
+            ? { id: { [db.Sequelize.Op.notIn]: assignedStudentIds } }
+            : {};
+
+        const students = await db.Student.findAll({
+            where,
+            attributes: ['id', 'fullName', 'DOB', 'school', 'parentPhoneNumber', 'parentEmail'],
+            include: [{
+                model: db.Class,
+                as: 'classes',
+                attributes: ['id', 'className', 'gradeLevel'],
+                through: { attributes: [] }
+            }],
+            order: [['fullName', 'ASC']]
+        });
+
+        return res.status(200).json(students);
+    } catch (error) {
+        console.error('getManagerAvailableStudents error:', error);
+        return sendControllerError(res, error, 'Error fetching available students');
+    }
+};
+
+const addManagerClassStudent = async (req, res) => {
+    const t = await db.sequelize.transaction();
+    try {
+        const classId = parseInt(req.params.classId, 10);
+        const studentIds = Array.isArray(req.body.studentIds) ? req.body.studentIds : [req.body.studentId];
+        const normalizedStudentIds = [...new Set(
+            studentIds
+                .map(id => parseInt(id, 10))
+                .filter(id => Number.isInteger(id) && id > 0)
+        )];
+
+        if (!classId || normalizedStudentIds.length === 0) {
+            await t.rollback();
+            return res.status(400).json({ message: 'classId and studentId/studentIds are required' });
+        }
+
+        const { classroom } = await getManagedClass(req.user.userId, classId, { transaction: t });
+
+        const students = await db.Student.findAll({
+            where: { id: { [db.Sequelize.Op.in]: normalizedStudentIds } },
+            attributes: ['id'],
+            transaction: t
+        });
+        if (students.length !== normalizedStudentIds.length) {
+            await t.rollback();
+            return res.status(404).json({ message: 'One or more students were not found' });
+        }
+
+        const existingLinks = await db.Student_Classes.findAll({
+            where: {
+                classId,
+                studentId: { [db.Sequelize.Op.in]: normalizedStudentIds }
+            },
+            attributes: ['studentId'],
+            transaction: t
+        });
+        const existingIds = new Set(existingLinks.map(link => link.studentId));
+        const newStudentIds = normalizedStudentIds.filter(id => !existingIds.has(id));
+
+        if (newStudentIds.length > 0) {
+            await db.Student_Classes.bulkCreate(
+                newStudentIds.map(studentId => ({ classId, studentId })),
+                { transaction: t }
+            );
+
+            const openLessons = await db.Lesson.findAll({
+                attributes: ['id'],
+                where: { isLocked: false },
+                include: [{
+                    model: db.Class,
+                    where: { id: classId },
+                    attributes: [],
+                    through: { attributes: [] }
+                }],
+                transaction: t
+            });
+
+            const lessonStudentRows = [];
+            for (const lesson of openLessons) {
+                for (const studentId of newStudentIds) {
+                    lessonStudentRows.push({ lessonId: lesson.id, studentId, attendance: true });
+                }
+            }
+
+            if (lessonStudentRows.length > 0) {
+                await db.LessonStudent.bulkCreate(lessonStudentRows, {
+                    ignoreDuplicates: true,
+                    transaction: t
+                });
+            }
+        }
+
+        await t.commit();
+        return res.status(200).json({
+            message: 'Students added to class successfully',
+            class: {
+                id: classroom.id,
+                className: classroom.className,
+                gradeLevel: classroom.gradeLevel
+            },
+            addedStudentIds: newStudentIds,
+            skippedStudentIds: [...existingIds]
+        });
+    } catch (error) {
+        await t.rollback();
+        console.error('addManagerClassStudent error:', error);
+        return sendControllerError(res, error, 'Error adding students to class');
+    }
+};
+
+const removeManagerClassStudent = async (req, res) => {
+    const t = await db.sequelize.transaction();
+    try {
+        const classId = parseInt(req.params.classId, 10);
+        const studentId = parseInt(req.params.studentId, 10);
+
+        if (!classId || !studentId) {
+            await t.rollback();
+            return res.status(400).json({ message: 'classId and studentId are required' });
+        }
+
+        await getManagedClass(req.user.userId, classId, { transaction: t });
+
+        const deleted = await db.Student_Classes.destroy({
+            where: { classId, studentId },
+            transaction: t
+        });
+
+        if (!deleted) {
+            await t.rollback();
+            return res.status(404).json({ message: 'Student is not assigned to this class' });
+        }
+
+        const openLessons = await db.Lesson.findAll({
+            attributes: ['id'],
+            where: { isLocked: false },
+            include: [{
+                model: db.Class,
+                where: { id: classId },
+                attributes: [],
+                through: { attributes: [] }
+            }],
+            transaction: t
+        });
+
+        const openLessonIds = openLessons.map(lesson => lesson.id);
+        if (openLessonIds.length > 0) {
+            await db.LessonStudent.destroy({
+                where: {
+                    studentId,
+                    lessonId: { [db.Sequelize.Op.in]: openLessonIds }
+                },
+                transaction: t
+            });
+        }
+
+        await t.commit();
+        return res.status(200).json({ message: 'Student removed from class successfully' });
+    } catch (error) {
+        await t.rollback();
+        console.error('removeManagerClassStudent error:', error);
+        return sendControllerError(res, error, 'Error removing student from class');
     }
 };
 
@@ -785,6 +998,9 @@ module.exports = {
     getManagerClasses,
     createLesson,
     getClassStudents,
+    getManagerAvailableStudents,
+    addManagerClassStudent,
+    removeManagerClassStudent,
     updateStudentAttendance,
     getLessonDetail,
     toggleLessonLock,
