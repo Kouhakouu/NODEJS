@@ -16,7 +16,7 @@ app.get("/", (req, res) => {
 });
 
 // Keep-warm: đánh thức cả serverless function lẫn Neon (auto-suspend sau ~5 phút).
-// Frontend ping khi mở trang login; nên đăng ký thêm cron ngoài (cron-job.org) gọi mỗi 4 phút.
+// Frontend ping khi mở trang login
 app.get("/health", async (_req, res) => {
     try {
         await db.sequelize.query("SELECT 1");

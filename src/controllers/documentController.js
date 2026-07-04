@@ -14,20 +14,37 @@ const upload = multer({
 });
 
 // Helper: đẩy buffer file lên Cloudinary bằng stream
+const path = require('path');
+
+const sanitizeFileName = (name) => {
+    const ext = path.extname(name); // .pdf, .docx, .xlsx...
+    const base = path.basename(name, ext)
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9-_]/g, '_');
+
+    return `${base}_${Date.now()}${ext}`;
+};
+
 const uploadBufferToCloudinary = (fileBuffer, originalName) => {
     return new Promise((resolve, reject) => {
+        const safeName = sanitizeFileName(originalName);
+
         const stream = cloudinary.uploader.upload_stream(
             {
-                folder: 'cmath-documents',     // thư mục trên Cloudinary
-                resource_type: 'auto',          // tự nhận PDF / ảnh / file khác
-                use_filename: true,
-                unique_filename: true,
+                folder: 'cmath-documents',
+                resource_type: 'auto',
+                public_id: safeName,
+                use_filename: false,
+                unique_filename: false,
+                filename_override: originalName,
             },
             (error, result) => {
                 if (error) return reject(error);
                 resolve(result);
             }
         );
+
         stream.end(fileBuffer);
     });
 };
@@ -52,6 +69,7 @@ const uploadDocument = async (req, res) => {
             description: description || null,
             fileUrl: result.secure_url,
             publicId: result.public_id,
+            resourceType: result.resource_type,
             fileName: req.file.originalname,
             fileType: req.file.mimetype,
             fileSize: req.file.size,
