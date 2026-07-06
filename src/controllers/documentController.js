@@ -1,7 +1,7 @@
-// controllers/documentController.js
 const multer = require('multer');
 const path = require('path');
-const axios = require('axios');
+const http = require('http');
+const https = require('https');
 const db = require('../models');
 
 // Lazy-load: chỉ nạp SDK Cloudinary khi thực sự upload/xoá file
@@ -42,7 +42,7 @@ const getCloudinaryResourceType = (mimeType = '') => {
     if (mimeType.startsWith('image/')) return 'image';
 
     // Cloudinary xử lý PDF tốt hơn dưới dạng image.
-    // Bạn đã bật Allow delivery PDF/ZIP nên tải được.
+    // Nếu đã bật Allow delivery PDF/ZIP thì tải được.
     if (mimeType === 'application/pdf') return 'image';
 
     if (mimeType.startsWith('video/')) return 'video';
@@ -94,6 +94,83 @@ const uploadBufferToCloudinary = (fileBuffer, originalName, mimeType) => {
         );
 
         stream.end(fileBuffer);
+    });
+};
+
+// Helper: tải file từ Cloudinary bằng module built-in của Node.js
+// Dùng thay axios để tránh lỗi "Cannot find module 'axios'" trên Vercel.
+const pipeRemoteFileToResponse = (fileUrl, res, headersToSet = {}, redirectCount = 0) => {
+    return new Promise((resolve, reject) => {
+        if (redirectCount > 5) {
+            return reject(new Error('Too many redirects while downloading file.'));
+        }
+
+        let parsedUrl;
+
+        try {
+            parsedUrl = new URL(fileUrl);
+        } catch {
+            return reject(new Error('File URL không hợp lệ.'));
+        }
+
+        const client = parsedUrl.protocol === 'http:' ? http : https;
+
+        const request = client.get(parsedUrl, (remoteRes) => {
+            const statusCode = remoteRes.statusCode || 500;
+
+            // Xử lý redirect nếu Cloudinary trả về 301/302/307...
+            if (
+                [301, 302, 303, 307, 308].includes(statusCode) &&
+                remoteRes.headers.location
+            ) {
+                remoteRes.resume();
+
+                const redirectUrl = new URL(
+                    remoteRes.headers.location,
+                    parsedUrl
+                ).toString();
+
+                pipeRemoteFileToResponse(
+                    redirectUrl,
+                    res,
+                    headersToSet,
+                    redirectCount + 1
+                )
+                    .then(resolve)
+                    .catch(reject);
+
+                return;
+            }
+
+            if (statusCode < 200 || statusCode >= 300) {
+                remoteRes.resume();
+                return reject(
+                    new Error(`Không tải được file. Status code: ${statusCode}`)
+                );
+            }
+
+            Object.entries(headersToSet).forEach(([key, value]) => {
+                if (value) {
+                    res.setHeader(key, value);
+                }
+            });
+
+            if (remoteRes.headers['content-length']) {
+                res.setHeader('Content-Length', remoteRes.headers['content-length']);
+            }
+
+            remoteRes.on('error', reject);
+
+            remoteRes.pipe(res);
+
+            remoteRes.on('end', resolve);
+        });
+
+        request.on('error', reject);
+
+        request.setTimeout(30000, () => {
+            request.destroy(new Error('Download request timed out.'));
+        });
     });
 };
 
@@ -222,31 +299,31 @@ const downloadDocument = async (req, res) => {
             });
         }
 
-        const response = await axios.get(doc.fileUrl, {
-            responseType: 'stream',
-        });
+        if (!doc.fileUrl) {
+            return res.status(404).json({
+                message: 'Tài liệu chưa có đường dẫn file.',
+            });
+        }
 
         const fileName = doc.fileName || 'document';
         const encodedFileName = encodeURIComponent(fileName);
 
-        res.setHeader(
-            'Content-Type',
-            doc.fileType || 'application/octet-stream'
-        );
+        await pipeRemoteFileToResponse(doc.fileUrl, res, {
+            'Content-Type': doc.fileType || 'application/octet-stream',
 
-        // filename*=UTF-8 giúp tải file tiếng Việt không bị lỗi tên
-        res.setHeader(
-            'Content-Disposition',
-            `attachment; filename*=UTF-8''${encodedFileName}`
-        );
-
-        response.data.pipe(res);
+            // filename*=UTF-8 giúp tải file tiếng Việt không bị lỗi tên
+            'Content-Disposition': `attachment; filename*=UTF-8''${encodedFileName}`,
+        });
     } catch (error) {
         console.error('downloadDocument error:', error.message);
 
-        return res.status(500).json({
-            message: 'Không thể tải tài liệu.',
-        });
+        if (!res.headersSent) {
+            return res.status(500).json({
+                message: 'Không thể tải tài liệu.',
+            });
+        }
+
+        return res.end();
     }
 };
 
