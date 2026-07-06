@@ -505,9 +505,8 @@ const updateStudentAttendance = async (req, res) => {
 const getLessonDetail = async (req, res) => {
     try {
         const lessonId = parseInt(req.params.lessonId, 10);
-        const classId = parseInt(req.params.classId, 10); // Lấy classId từ URL
+        const classId = parseInt(req.params.classId, 10);
 
-        // 1+2. Thông tin lớp (lấy tên) + buổi học hiện tại: 2 query độc lập, chạy song song
         const [classInfo, currentLesson] = await Promise.all([
             db.Class.findByPk(classId, { attributes: ['className'] }),
             db.Lesson.findByPk(lessonId)
@@ -517,44 +516,43 @@ const getLessonDetail = async (req, res) => {
             return res.status(404).json({ message: 'Lesson not found' });
         }
 
-        // 3. Tìm buổi học TRƯỚC ĐÓ của lớp này (để lấy nội dung và số bài tập cũ)
-        // Query này dựa trên logic: Cùng classId, ngày học nhỏ hơn ngày hiện tại, lấy ngày gần nhất
         const previousLesson = await db.Lesson.findOne({
             include: [{
                 model: db.Class,
-                where: { id: classId }, // Quan trọng: Phải thuộc lớp này
+                where: { id: classId },
                 attributes: [],
                 through: { attributes: [] }
             }],
             where: {
                 lessonDate: {
-                    [db.Sequelize.Op.lt]: currentLesson.lessonDate // Ngày nhỏ hơn ngày hiện tại
+                    [db.Sequelize.Op.lt]: currentLesson.lessonDate
                 }
             },
-            order: [['lessonDate', 'DESC']], // Lấy bài mới nhất trong quá khứ
+            order: [['lessonDate', 'DESC']],
         });
 
-        // 4. Chuẩn bị dữ liệu buổi trước
         const prevData = previousLesson ? {
             content: previousLesson.lessonContent,
-            homeworkCount: previousLesson.totalTaskLength
         } : {
-            content: 'Không có buổi học trước',
-            homeworkCount: 0
+            content: 'Không có',
         };
 
-        // 5. Trả về kết quả gộp
         return res.status(200).json({
             id: currentLesson.id,
-            className: classInfo ? classInfo.className : `Lớp ${classId}`, // <--- TRẢ VỀ TÊN LỚP TẠI ĐÂY
+            className: classInfo ? classInfo.className : `Lớp ${classId}`,
             lessonContent: currentLesson.lessonContent,
             lessonDate: currentLesson.lessonDate,
-            totalTaskLength: currentLesson.totalTaskLength,
+
+            // Tổng số BTVN của buổi hiện tại
+            totalTaskLength: Number(currentLesson.totalTaskLength ?? 0),
+
             isLocked: Boolean(currentLesson.isLocked),
 
-            // Thông tin buổi trước
+            // Nội dung buổi trước vẫn lấy từ buổi trước
             previousLessonContent: prevData.content,
-            previousHomeworkCount: prevData.homeworkCount
+
+            // Đổi dòng này: Tổng số BTVN lấy theo bài hiện tại (hiện tại đang hotfix, tên biến bị sai nghĩa để frontend ko chỉnh nhiều)
+            previousHomeworkCount: Number(currentLesson.totalTaskLength ?? 0)
         });
 
     } catch (error) {
@@ -922,12 +920,12 @@ const getManagerDashboardStats = async (req, res) => {
 
         const attendanceMap = new Map(
             attendanceRows.map(r => [`${r.classId}_${r.lessonId}`,
-                r.total > 0 ? Math.round((r.present / r.total) * 100) : null
+            r.total > 0 ? Math.round((r.present / r.total) * 100) : null
             ])
         );
         const scoreMap = new Map(
             scoreRows.map(r => [`${r.classId}_${r.lessonId}`,
-                r.avgScore != null ? Math.round(parseFloat(r.avgScore) * 10) / 10 : null
+            r.avgScore != null ? Math.round(parseFloat(r.avgScore) * 10) / 10 : null
             ])
         );
 
