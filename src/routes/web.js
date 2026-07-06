@@ -82,6 +82,7 @@ let initWebRoutes = (app) => {
     //tài liệu giáo viên
     router.get('/teacher/documents', teacherOnly, documentController.getDocuments);
     router.post('/teacher/documents', teacherOnly, documentController.upload.single('file'), documentController.uploadDocument);
+    router.get('/teacher/documents/:id/download', teacherOnly, documentController.downloadDocument);
     router.delete('/teacher/documents/:id', teacherOnly, documentController.deleteDocument);
 
     //trang trợ giảng
