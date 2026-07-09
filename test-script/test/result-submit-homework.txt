@@ -1,0 +1,29 @@
+
+KẾT QUẢ KIỂM THỬ HIỆU NĂNG CHẤM BÀI TẬP VỀ NHÀ
+=================================================
+
+Kịch bản kiểm thử:
+- Giả lập nhiều trợ giảng đăng nhập đồng thời
+- Mỗi trợ giảng gửi 1 request Submit kết quả chấm bài
+- Mỗi request tương ứng với một học sinh trong file homework-performance.csv
+- API kiểm thử:
+  POST /assistant/classes/15/lessons/12/students-performance
+
+Tiêu chí đánh giá:
+- P95 response time < 2000ms
+- Tỉ lệ lỗi < 1%
+
+Tổng quan:
+- Tổng số request: 100
+- Tốc độ request: 47.68 req/s
+- Tỉ lệ check thành công: 100.00%
+
+Thời gian phản hồi API chấm bài:
+- Trung bình: 220.09 ms
+- Min: 138.16 ms
+- Median: 221.17 ms
+- Max: 463.99 ms
+
+Kết luận:
+- Đạt yêu cầu về thời gian phản hồi: P95 nhỏ hơn 2 giây.
+- Đạt yêu cầu về tỉ lệ lỗi: nhỏ hơn 1%.

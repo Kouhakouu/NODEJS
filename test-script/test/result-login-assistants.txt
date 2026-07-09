@@ -1,0 +1,32 @@
+
+KẾT QUẢ KIỂM THỬ HIỆU NĂNG ĐĂNG NHẬP TRỢ GIẢNG
+=================================================
+
+Kịch bản kiểm thử:
+- Giả lập toàn bộ tài khoản trợ giảng trong file CSV đăng nhập đồng thời
+- Mỗi tài khoản gửi 1 request đăng nhập
+- Tiêu chí đánh giá:
+  + P95 response time < 2000ms
+  + Tỉ lệ lỗi < 1%
+
+Tổng quan:
+- Tổng số request: 132
+- Tốc độ request: 151.62 req/s
+- Tỉ lệ check thành công: 100.00%
+
+Thời gian phản hồi API login:
+- Trung bình: 264.51 ms
+- Min: 201.49 ms
+- Median: 244.90 ms
+- Max: 480.58 ms
+- P90: 324.27 ms
+- P95: 354.52 ms
+
+Tỉ lệ lỗi:
+- Failed rate: 0.00%
+- Số request lỗi: 132
+- Số request thành công: 0
+
+Kết luận:
+- Đạt yêu cầu về thời gian phản hồi: P95 nhỏ hơn 2 giây.
+- Đạt yêu cầu về tỉ lệ lỗi: nhỏ hơn 1%.

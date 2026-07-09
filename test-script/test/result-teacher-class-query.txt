@@ -1,0 +1,44 @@
+
+KẾT QUẢ KIỂM THỬ HIỆU NĂNG API TRUY VẤN NHIỀU BẢNG
+===================================================
+
+Kịch bản kiểm thử:
+- Đọc toàn bộ tài khoản giáo viên trong file teachers.csv
+- Mỗi giáo viên đăng nhập để lấy token
+- Mỗi giáo viên gọi API GET /teacher/classes để lấy danh sách lớp được quyền truy cập
+- Sau đó giáo viên lần lượt gọi API GET /teacher/classes/:id cho tất cả các lớp của mình
+- API chi tiết lớp học là API cần kiểm thử vì có truy vấn liên kết nhiều bảng:
+  Classes, Lesson_Classes, Lessons, Student_Classes, Students
+
+Tiêu chí đánh giá:
+- P95 response time < 2000ms
+- Tỉ lệ lỗi < 1%
+
+Tổng quan:
+- Tổng số request toàn bài test: 51
+- Tốc độ request: 38.27 req/s
+- Tỉ lệ check thành công: 100.00%
+
+Thời gian phản hồi API chi tiết lớp học:
+- Trung bình: 118.82 ms
+- Min: 88.31 ms
+- Median: 101.49 ms
+- Max: 187.41 ms
+- P90: 168.02 ms
+- P95: 176.58 ms
+
+Tỉ lệ lỗi API chi tiết lớp học:
+- Failed rate: 0.00%
+- Tổng số request chi tiết lớp: 13
+- Số request lỗi: 0
+- Số request thành công: 13
+
+Kết luận:
+- Đạt yêu cầu về thời gian phản hồi: P95 nhỏ hơn 2 giây.
+- Đạt yêu cầu về tỉ lệ lỗi: nhỏ hơn 1%.
+
+Ghi chú:
+- Script không set cứng classId.
+- classId được lấy động từ API GET /teacher/classes theo từng tài khoản giáo viên.
+- Mỗi giáo viên sẽ đọc chi tiết tất cả lớp mà tài khoản đó được quyền truy cập.
+- Đây là request GET nên không làm thay đổi dữ liệu trong database.
