@@ -273,7 +273,7 @@ const getClassStudents = async (req, res) => {
         }));
 
         // 2) Lấy toàn bộ performance của lớp bằng 1 query duy nhất
-        // (thay vì N học sinh x M buổi = N*M query findOne như trước)
+        // (thay vì N học sinh x M buổi = N*M query findOne)
         const studentIds = cls.students.map(s => s.id);
         const lessonIds = sessions.map(ss => ss.id);
 

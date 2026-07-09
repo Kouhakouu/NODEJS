@@ -586,30 +586,35 @@ const toggleLessonLock = async (req, res) => {
     }
 };
 
-// POST /manager/classes/:classId/lessons/:lessonId/send-results-emails
+// POST /manager/classes/:classId/lessons/:lessonId/send-results-emails?offset=0&limit=5
 const sendLessonResultsEmails = async (req, res) => {
     try {
         const classId = parseInt(req.params.classId, 10);
         const lessonId = parseInt(req.params.lessonId, 10);
 
-        // 1) Lấy lesson + class song song, rồi check locked
+        const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 5, 1), 10);
+
         const [lesson, cls] = await Promise.all([
             db.Lesson.findByPk(lessonId),
             db.Class.findByPk(classId, { attributes: ["id", "className"] })
         ]);
+
         if (!lesson) return res.status(404).json({ message: "Lesson not found" });
         if (!cls) return res.status(404).json({ message: "Class not found" });
 
         if (!lesson.isLocked) {
             return res.status(400).json({
-                message: "Buổi học chưa chốt (isLocked=false), không thể gửi email.",
+                message: "Buổi học chưa chốt, không thể gửi email.",
             });
         }
 
-        // 2-5) Snapshot học sinh, previous lesson và performance: 3 query độc lập, chạy song song
-        // (raw SQL phải quote identifier camelCase vì Postgres fold về chữ thường)
         const [lessonStudentRows, previousLesson, [perfRows]] = await Promise.all([
-            db.LessonStudent.findAll({ where: { lessonId } }),
+            db.LessonStudent.findAll({
+                where: { lessonId },
+                order: [["studentId", "ASC"]],
+            }),
+
             db.Lesson.findOne({
                 include: [{
                     model: db.Class,
@@ -622,60 +627,73 @@ const sendLessonResultsEmails = async (req, res) => {
                 },
                 order: [["lessonDate", "DESC"]],
             }),
+
             db.sequelize.query(
                 `
-  SELECT
-    sp.id,
-    sp."doneTask",
-    sp."totalScore",
-    sp."incorrectTasks",
-    sp."missingTasks",
-    sp.presentation,
-    sp.skills,
-    sp.comment,
-    sps."studentId"
-  FROM "StudentPerformances" sp
-  INNER JOIN "StudentPerformance_Lessons" spl
-    ON spl."studentPerformanceId" = sp.id
-  INNER JOIN "StudentPerformance_Students" sps
-    ON sps."studentPerformanceId" = sp.id
-  WHERE spl."lessonId" = :lessonId
-  ORDER BY sp.id DESC
-  `,
+                SELECT
+                    sp.id,
+                    sp."doneTask",
+                    sp."totalScore",
+                    sp."incorrectTasks",
+                    sp."missingTasks",
+                    sp.presentation,
+                    sp.skills,
+                    sp.comment,
+                    sps."studentId"
+                FROM "StudentPerformances" sp
+                INNER JOIN "StudentPerformance_Lessons" spl
+                    ON spl."studentPerformanceId" = sp.id
+                INNER JOIN "StudentPerformance_Students" sps
+                    ON sps."studentPerformanceId" = sp.id
+                WHERE spl."lessonId" = :lessonId
+                ORDER BY sp.id DESC
+                `,
                 { replacements: { lessonId } }
             )
         ]);
 
         const lessonStudentIds = lessonStudentRows.map(r => r.studentId);
-        const students = lessonStudentIds.length > 0
+
+        const allStudents = lessonStudentIds.length > 0
             ? await db.Student.findAll({
                 where: { id: { [db.Sequelize.Op.in]: lessonStudentIds } },
                 attributes: ["id", "fullName", "parentEmail"]
             })
             : [];
 
+        const studentMap = new Map(allStudents.map(s => [s.id, s]));
+
+        // Giữ thứ tự ổn định theo LessonStudent
+        const orderedStudents = lessonStudentIds
+            .map(id => studentMap.get(id))
+            .filter(Boolean);
+
+        const totalStudents = orderedStudents.length;
+
+        // Chỉ lấy 1 batch nhỏ trong request này
+        const batchStudents = orderedStudents.slice(offset, offset + limit);
+
         const previousLessonContent = previousLesson?.lessonContent || "Không có buổi học trước";
 
-        // Attendance map từ lessonStudentRows
-        const attendanceMap = new Map(lessonStudentRows.map(r => [r.studentId, r.attendance]));
-
-        // Map performance mới nhất theo studentId
         const perfByStudentId = new Map();
         for (const row of perfRows) {
             if (!perfByStudentId.has(row.studentId)) {
-                perfByStudentId.set(row.studentId, row); // do ORDER BY id DESC
+                perfByStudentId.set(row.studentId, row);
             }
         }
 
-        // 6) Send mails: gửi song song trên 1 pool SMTP thay vì tuần tự từng email
         const subject = "[CMATH EDUCATION] ĐÁNH GIÁ KẾT QUẢ HỌC TẬP";
 
         let skippedNoEmail = 0;
         const mailItems = [];
 
-        for (const s of students) {
+        for (const s of batchStudents) {
             const to = s.parentEmail;
-            if (!to) { skippedNoEmail++; continue; }
+
+            if (!to) {
+                skippedNoEmail++;
+                continue;
+            }
 
             const perf = perfByStudentId.get(s.id) || null;
 
@@ -705,25 +723,49 @@ const sendLessonResultsEmails = async (req, res) => {
 
         const sendResults = await sendLessonResultEmailsBatch(mailItems);
 
-        let sent = 0, failed = 0;
+        let sent = 0;
+        let failed = 0;
         const errors = [];
+
         sendResults.forEach((r, i) => {
             if (r.status === "fulfilled") {
                 sent++;
             } else {
                 failed++;
-                errors.push({ ...mailItems[i].meta, error: r.reason?.message || "unknown error" });
+                errors.push({
+                    ...mailItems[i].meta,
+                    error: r.reason?.message || "unknown error"
+                });
             }
         });
 
+        const nextOffset = offset + limit;
+        const hasMore = nextOffset < totalStudents;
+
         return res.status(200).json({
-            message: "Đã xử lý gửi email kết quả buổi học.",
-            stats: { sent, failed, skippedNoEmail },
+            message: "Đã xử lý một batch email.",
+            batch: {
+                offset,
+                limit,
+                processed: batchStudents.length,
+                nextOffset,
+                hasMore,
+            },
+            totalStudents,
+            stats: {
+                sent,
+                failed,
+                skippedNoEmail,
+            },
             errors,
         });
+
     } catch (error) {
         console.error("sendLessonResultsEmails error:", error);
-        return res.status(500).json({ message: "Internal server error", error: error.message });
+        return res.status(500).json({
+            message: "Internal server error",
+            error: error.message
+        });
     }
 };
 
