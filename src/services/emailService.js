@@ -17,7 +17,6 @@ function getTemplate(templateName) {
     templateCache.set(templateName, compiled);
     return compiled;
 }
-
 function smtpConfig(extra = {}) {
     return {
         host: process.env.SMTP_HOST,
@@ -26,6 +25,9 @@ function smtpConfig(extra = {}) {
         auth: {
             user: process.env.SMTP_USER,
             pass: process.env.SMTP_PASS,
+        },
+        tls: {
+            rejectUnauthorized: false
         },
         ...extra,
     };
