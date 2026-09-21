@@ -261,6 +261,275 @@ const createLesson = async (req, res) => {
     }
 };
 
+// Chuẩn hoá họ tên để so khớp: bỏ khoảng trắng thừa, không phân biệt hoa thường
+const normalizeStudentName = (name) => String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+// DOB trong DB là DATEONLY nên luôn quy về chuỗi 'YYYY-MM-DD' trước khi so khớp
+const normalizeDOB = (dob) => {
+    if (!dob) return '';
+    if (typeof dob === 'string') {
+        const trimmed = dob.trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+        const parsed = new Date(trimmed);
+        return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10);
+    }
+    const parsed = new Date(dob);
+    return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10);
+};
+
+const studentMatchKey = (name, dob) => `${normalizeStudentName(name)}|${normalizeDOB(dob)}`;
+
+// Model Student validate isEmail nên email sai định dạng trong file phải bỏ đi thay vì làm hỏng cả import
+const sanitizeStudentEmail = (email) => {
+    const value = String(email || '').trim();
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? value : null;
+};
+
+// Tạo buổi học từ danh sách học viên đọc trong file Excel (frontend đã parse sẵn thành JSON)
+const createLessonFromExcel = async (req, res) => {
+    const t = await db.sequelize.transaction();
+    try {
+        const classId = parseInt(req.params.classId, 10);
+        const {
+            lessonDate,
+            lessonContent = '',
+            homeworkList = '',
+            students,
+            syncClassRoster = true
+        } = req.body;
+
+        if (!classId || !lessonDate) {
+            await t.rollback();
+            return res.status(400).json({ message: 'classId và lessonDate là bắt buộc' });
+        }
+        if (!Array.isArray(students) || students.length === 0) {
+            await t.rollback();
+            return res.status(400).json({ message: 'Danh sách học sinh từ file Excel đang trống' });
+        }
+
+        const { classroom } = await getManagedClass(req.user.userId, classId, { transaction: t });
+
+        // Chuẩn hoá + loại bỏ dòng trùng (cùng tên + ngày sinh) trong file
+        const seenKeys = new Set();
+        const skipped = [];
+        const rows = [];
+        students.forEach((raw, index) => {
+            const fullName = String(raw?.fullName || '').trim().replace(/\s+/g, ' ');
+            const DOB = normalizeDOB(raw?.DOB);
+
+            if (!fullName) {
+                skipped.push({ row: index + 1, fullName: '', reason: 'Thiếu họ tên học sinh' });
+                return;
+            }
+            const key = studentMatchKey(fullName, DOB);
+            if (seenKeys.has(key)) {
+                skipped.push({ row: index + 1, fullName, reason: 'Trùng với một dòng khác trong file' });
+                return;
+            }
+            seenKeys.add(key);
+
+            rows.push({
+                key,
+                rowNumber: index + 1,
+                fullName,
+                DOB,
+                school: String(raw?.school || '').trim() || null,
+                parentEmail: sanitizeStudentEmail(raw?.parentEmail),
+                parentPhoneNumber: String(raw?.parentPhoneNumber || '').trim() || null,
+                studentCode: String(raw?.studentCode || '').trim() || null,
+                studyStatus: String(raw?.studyStatus || '').trim() || null,
+                attendance: raw?.attendance !== false
+            });
+        });
+
+        if (rows.length === 0) {
+            await t.rollback();
+            return res.status(400).json({ message: 'Không có dòng học sinh hợp lệ trong file Excel', skipped });
+        }
+
+        // 1) Học sinh đang có trong lớp
+        const classStudents = await db.Student.findAll({
+            include: [{
+                model: db.Class,
+                as: 'classes',
+                where: { id: classId },
+                attributes: [],
+                through: { attributes: [] }
+            }],
+            transaction: t
+        });
+
+        const byKey = new Map();
+        const byName = new Map();
+        const indexStudent = (student) => {
+            byKey.set(studentMatchKey(student.fullName, student.DOB), student);
+            const nameKey = normalizeStudentName(student.fullName);
+            if (byName.has(nameKey)) {
+                byName.set(nameKey, null); // trùng tên -> không dùng tên để so khớp nữa
+            } else {
+                byName.set(nameKey, student);
+            }
+        };
+        classStudents.forEach(indexStudent);
+
+        const classStudentIds = new Set(classStudents.map(student => student.id));
+
+        const resolved = new Map(); // row.key -> { student, origin }
+        const unresolvedRows = rows.filter((row) => {
+            // Trong phạm vi một lớp, trùng họ tên gần như chắc chắn là cùng một học sinh
+            // nên vẫn nhận nếu ngày sinh trong file lệch với hồ sơ đang lưu.
+            const matched = byKey.get(row.key) || byName.get(normalizeStudentName(row.fullName));
+            if (matched) {
+                resolved.set(row.key, { student: matched, origin: 'class' });
+                return false;
+            }
+            return true;
+        });
+
+        // 2) Học sinh đã có trong hệ thống nhưng chưa thuộc lớp này
+        if (unresolvedRows.length > 0) {
+            const dobList = [...new Set(unresolvedRows.map(r => r.DOB).filter(Boolean))];
+            const nameList = [...new Set(unresolvedRows.map(r => r.fullName))];
+            const orConditions = [];
+            if (dobList.length > 0) orConditions.push({ DOB: { [db.Sequelize.Op.in]: dobList } });
+            if (nameList.length > 0) orConditions.push({ fullName: { [db.Sequelize.Op.in]: nameList } });
+
+            const candidates = orConditions.length > 0
+                ? await db.Student.findAll({
+                    where: { [db.Sequelize.Op.or]: orConditions },
+                    transaction: t
+                })
+                : [];
+
+            const globalByKey = new Map();
+            candidates.forEach(student => {
+                const key = studentMatchKey(student.fullName, student.DOB);
+                if (!globalByKey.has(key)) globalByKey.set(key, student);
+            });
+
+            unresolvedRows.forEach(row => {
+                const matched = globalByKey.get(row.key);
+                if (matched) resolved.set(row.key, { student: matched, origin: 'system' });
+            });
+        }
+
+        // 3) Học sinh hoàn toàn mới -> tạo mới (bắt buộc phải có ngày sinh vì DOB NOT NULL)
+        const toCreate = [];
+        rows.forEach(row => {
+            if (resolved.has(row.key)) return;
+            if (!row.DOB) {
+                skipped.push({
+                    row: row.rowNumber,
+                    fullName: row.fullName,
+                    reason: 'Học sinh mới nhưng thiếu ngày sinh nên không thể tạo hồ sơ'
+                });
+                return;
+            }
+            toCreate.push(row);
+        });
+
+        for (const row of toCreate) {
+            const created = await db.Student.create({
+                fullName: row.fullName,
+                DOB: row.DOB,
+                school: row.school,
+                parentPhoneNumber: row.parentPhoneNumber,
+                parentEmail: row.parentEmail
+            }, { transaction: t });
+            resolved.set(row.key, { student: created, origin: 'created' });
+        }
+
+        // Bổ sung thông tin còn trống cho học sinh đã có (không ghi đè dữ liệu cũ)
+        for (const row of rows) {
+            const entry = resolved.get(row.key);
+            if (!entry || entry.origin === 'created') continue;
+            const patch = {};
+            if (!entry.student.school && row.school) patch.school = row.school;
+            if (!entry.student.parentEmail && row.parentEmail) patch.parentEmail = row.parentEmail;
+            if (!entry.student.parentPhoneNumber && row.parentPhoneNumber) patch.parentPhoneNumber = row.parentPhoneNumber;
+            if (Object.keys(patch).length > 0) {
+                await entry.student.update(patch, { transaction: t });
+            }
+        }
+
+        const usableRows = rows.filter(row => resolved.has(row.key));
+        if (usableRows.length === 0) {
+            await t.rollback();
+            return res.status(400).json({ message: 'Không thể xác định học sinh nào từ file Excel', skipped });
+        }
+
+        // 4) Đồng bộ sĩ số lớp
+        // Bảng Student_Classes không có unique index nên phải tự lọc để tránh ghi trùng
+        const newLinkStudentIds = [...new Set(
+            usableRows
+                .map(row => resolved.get(row.key).student.id)
+                .filter(studentId => !classStudentIds.has(studentId))
+        )];
+        const newClassLinks = newLinkStudentIds.map(studentId => ({ classId, studentId }));
+
+        if (syncClassRoster && newClassLinks.length > 0) {
+            await db.Student_Classes.bulkCreate(newClassLinks, { transaction: t });
+        }
+
+        // 5) Tạo buổi học + snapshot điểm danh theo file Excel
+        const newLesson = await db.Lesson.create({
+            lessonContent: lessonContent || '',
+            homeworkList: homeworkList || null,
+            totalTaskLength: 0, // hook beforeSave tính lại theo homeworkList
+            lessonDate
+        }, { transaction: t });
+
+        await db.LessonClass.create({
+            lessonId: newLesson.id,
+            classId
+        }, { transaction: t });
+
+        const lessonStudentRows = [];
+        const seenStudentIds = new Set();
+        usableRows.forEach(row => {
+            const studentId = resolved.get(row.key).student.id;
+            if (seenStudentIds.has(studentId)) return;
+            seenStudentIds.add(studentId);
+            lessonStudentRows.push({
+                lessonId: newLesson.id,
+                studentId,
+                attendance: row.attendance
+            });
+        });
+
+        if (lessonStudentRows.length > 0) {
+            await db.LessonStudent.bulkCreate(lessonStudentRows, {
+                ignoreDuplicates: true,
+                transaction: t
+            });
+        }
+
+        await t.commit();
+
+        const summary = {
+            totalRows: students.length,
+            matchedInClass: [...resolved.values()].filter(e => e.origin === 'class').length,
+            linkedFromSystem: [...resolved.values()].filter(e => e.origin === 'system').length,
+            createdStudents: [...resolved.values()].filter(e => e.origin === 'created').length,
+            addedToClass: syncClassRoster ? newClassLinks.length : 0,
+            attendedCount: lessonStudentRows.filter(r => r.attendance).length,
+            absentCount: lessonStudentRows.filter(r => !r.attendance).length,
+            skipped
+        };
+
+        return res.status(201).json({
+            message: `Đã tạo buổi học với ${lessonStudentRows.length} học sinh từ file Excel.`,
+            lesson: newLesson,
+            class: { id: classroom.id, className: classroom.className },
+            summary
+        });
+    } catch (error) {
+        await t.rollback();
+        console.error('createLessonFromExcel error:', error);
+        return sendControllerError(res, error, 'Không thể tạo buổi học từ file Excel');
+    }
+};
+
 const getClassStudents = async (req, res) => {
     try {
         const classId = parseInt(req.params.id, 10);
@@ -1037,6 +1306,7 @@ module.exports = {
     deleteManager,
     getManagerClasses,
     createLesson,
+    createLessonFromExcel,
     getClassStudents,
     getManagerAvailableStudents,
     addManagerClassStudent,

@@ -115,6 +115,7 @@ let initWebRoutes = (app) => {
     router.post('/manager/classes/:classId/students', managerOnly, managerController.addManagerClassStudent);
     router.delete('/manager/classes/:classId/students/:studentId', managerOnly, managerController.removeManagerClassStudent);
     router.post('/createLesson', managerOnly, managerController.createLesson);
+    router.post('/manager/classes/:classId/lessons/import-excel', managerOnly, managerController.createLessonFromExcel);
     router.get('/manager/classes/:id/lessons', managerOnly, assistantController.getAssistantLessons);
     router.get('/manager/classes/:id/lessons/:lessonId/students-performance', managerOnly, assistantController.getLessonStudentsPerformance);
     router.get('/students/:id', managerOnly, managerController.getClassStudents);
