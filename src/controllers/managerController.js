@@ -261,6 +261,53 @@ const createLesson = async (req, res) => {
     }
 };
 
+// Xóa buổi học (dùng khi lỡ tạo nhầm) - DELETE /manager/classes/:classId/lessons/:lessonId
+const deleteLesson = async (req, res) => {
+    const classId = parseInt(req.params.classId, 10);
+    const lessonId = parseInt(req.params.lessonId, 10);
+    if (!Number.isInteger(classId) || !Number.isInteger(lessonId)) {
+        return res.status(400).json({ message: 'classId và lessonId không hợp lệ' });
+    }
+
+    const t = await db.sequelize.transaction();
+    try {
+        // Chỉ cho xóa buổi học thuộc đúng lớp được truyền vào
+        const link = await db.LessonClass.findOne({ where: { lessonId, classId }, transaction: t });
+        const lesson = link ? await db.Lesson.findByPk(lessonId, { transaction: t }) : null;
+        if (!lesson) {
+            await t.rollback();
+            return res.status(404).json({ message: 'Không tìm thấy buổi học trong lớp này' });
+        }
+
+        if (lesson.isLocked) {
+            await t.rollback();
+            return res.status(409).json({ message: 'Buổi học đã được chốt kết quả. Hãy mở khóa trước khi xóa.' });
+        }
+
+        // Các bảng nối (Lesson_Classes, Lesson_Students, ...) tự xóa theo ON DELETE CASCADE,
+        // nhưng bản ghi StudentPerformance thì không nên bị bỏ lại mồ côi.
+        const performanceLinks = await db.StudentPerformanceLesson.findAll({
+            where: { lessonId },
+            attributes: ['studentPerformanceId'],
+            transaction: t
+        });
+        const performanceIds = performanceLinks.map(p => p.studentPerformanceId);
+
+        await lesson.destroy({ transaction: t });
+
+        if (performanceIds.length > 0) {
+            await db.StudentPerformance.destroy({ where: { id: performanceIds }, transaction: t });
+        }
+
+        await t.commit();
+        return res.status(200).json({ message: 'Đã xóa buổi học' });
+    } catch (error) {
+        await t.rollback();
+        console.error('deleteLesson error:', error);
+        return res.status(500).json({ message: 'Lỗi server khi xóa buổi học' });
+    }
+};
+
 // Chuẩn hoá họ tên để so khớp: bỏ khoảng trắng thừa, không phân biệt hoa thường
 const normalizeStudentName = (name) => String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
 
@@ -770,6 +817,23 @@ const updateStudentAttendance = async (req, res) => {
     }
 };
 
+// Buổi học liền trước (cùng lớp) của một buổi học
+const findPreviousLesson = (classId, currentLesson, options = {}) => db.Lesson.findOne({
+    include: [{
+        model: db.Class,
+        where: { id: classId },
+        attributes: [],
+        through: { attributes: [] }
+    }],
+    where: {
+        lessonDate: {
+            [db.Sequelize.Op.lt]: currentLesson.lessonDate
+        }
+    },
+    order: [['lessonDate', 'DESC']],
+    ...options
+});
+
 //Lấy thông tin buổi học
 const getLessonDetail = async (req, res) => {
     try {
@@ -785,20 +849,7 @@ const getLessonDetail = async (req, res) => {
             return res.status(404).json({ message: 'Lesson not found' });
         }
 
-        const previousLesson = await db.Lesson.findOne({
-            include: [{
-                model: db.Class,
-                where: { id: classId },
-                attributes: [],
-                through: { attributes: [] }
-            }],
-            where: {
-                lessonDate: {
-                    [db.Sequelize.Op.lt]: currentLesson.lessonDate
-                }
-            },
-            order: [['lessonDate', 'DESC']],
-        });
+        const previousLesson = await findPreviousLesson(classId, currentLesson);
 
         const prevData = previousLesson ? {
             content: previousLesson.lessonContent,
@@ -812,6 +863,9 @@ const getLessonDetail = async (req, res) => {
             lessonContent: currentLesson.lessonContent,
             lessonDate: currentLesson.lessonDate,
 
+            // BTVN tuần sau (văn bản tự do)
+            nextHomework: currentLesson.nextHomework || '',
+
             // Tổng số BTVN của buổi hiện tại
             totalTaskLength: Number(currentLesson.totalTaskLength ?? 0),
 
@@ -819,6 +873,7 @@ const getLessonDetail = async (req, res) => {
 
             // Nội dung buổi trước vẫn lấy từ buổi trước
             previousLessonContent: prevData.content,
+            hasPreviousLesson: Boolean(previousLesson),
 
             // Đổi dòng này: Tổng số BTVN lấy theo bài hiện tại (hiện tại đang hotfix, tên biến bị sai nghĩa để frontend ko chỉnh nhiều)
             previousHomeworkCount: Number(currentLesson.totalTaskLength ?? 0)
@@ -827,6 +882,86 @@ const getLessonDetail = async (req, res) => {
     } catch (error) {
         console.error('getLessonDetail error:', error);
         return res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+// Manager chỉnh sửa thông tin buổi học - PUT /manager/classes/:classId/lessons/:lessonId
+// Body (mỗi trường đều tùy chọn): lessonContent, previousLessonContent, totalTaskLength, nextHomework
+const updateLessonDetail = async (req, res) => {
+    const classId = parseInt(req.params.classId, 10);
+    const lessonId = parseInt(req.params.lessonId, 10);
+    if (!Number.isInteger(classId) || !Number.isInteger(lessonId)) {
+        return res.status(400).json({ message: 'classId và lessonId không hợp lệ' });
+    }
+
+    const { lessonContent, previousLessonContent, totalTaskLength, nextHomework } = req.body || {};
+
+    if (lessonContent !== undefined && typeof lessonContent !== 'string') {
+        return res.status(400).json({ message: 'Nội dung bài học phải là văn bản.' });
+    }
+    if (previousLessonContent !== undefined && typeof previousLessonContent !== 'string') {
+        return res.status(400).json({ message: 'Nội dung buổi trước phải là văn bản.' });
+    }
+    if (nextHomework !== undefined && typeof nextHomework !== 'string') {
+        return res.status(400).json({ message: 'BTVN tuần sau phải là văn bản.' });
+    }
+    let taskCount;
+    if (totalTaskLength !== undefined) {
+        taskCount = Number(totalTaskLength);
+        if (!Number.isInteger(taskCount) || taskCount < 0 || taskCount > 500) {
+            return res.status(400).json({ message: 'Tổng số BTVN phải là số nguyên từ 0 đến 500.' });
+        }
+    }
+
+    const t = await db.sequelize.transaction();
+    try {
+        const link = await db.LessonClass.findOne({ where: { lessonId, classId }, transaction: t });
+        const lesson = link ? await db.Lesson.findByPk(lessonId, { transaction: t }) : null;
+        if (!lesson) {
+            await t.rollback();
+            return res.status(404).json({ message: 'Không tìm thấy buổi học trong lớp này' });
+        }
+
+        if (lessonContent !== undefined) lesson.lessonContent = lessonContent.trim();
+        if (nextHomework !== undefined) lesson.nextHomework = nextHomework.trim();
+
+        if (taskCount !== undefined) {
+            const tasks = (lesson.homeworkList || '')
+                .split(',').map(s => s.trim()).filter(Boolean);
+            if (tasks.length === 0) {
+                // Chưa có danh sách bài tập: chỉ lưu tổng số (trợ giảng sẽ thấy "Bài 1..N")
+                lesson.totalTaskLength = taskCount;
+            } else {
+                // Có danh sách bài tập: cắt bớt hoặc bổ sung "Bài k" cho khớp số lượng,
+                // hook beforeSave sẽ tính lại totalTaskLength từ danh sách.
+                const adjusted = tasks.slice(0, taskCount);
+                for (let i = adjusted.length; i < taskCount; i++) adjusted.push(`Bài ${i + 1}`);
+                lesson.homeworkList = adjusted.join(', ');
+            }
+        }
+        await lesson.save({ transaction: t });
+
+        if (previousLessonContent !== undefined) {
+            const previousLesson = await findPreviousLesson(classId, lesson, { transaction: t });
+            if (!previousLesson) {
+                await t.rollback();
+                return res.status(400).json({ message: 'Lớp chưa có buổi học trước để chỉnh sửa nội dung.' });
+            }
+            previousLesson.lessonContent = previousLessonContent.trim();
+            await previousLesson.save({ transaction: t });
+        }
+
+        await t.commit();
+        return res.status(200).json({
+            message: 'Cập nhật thông tin buổi học thành công!',
+            lessonContent: lesson.lessonContent,
+            nextHomework: lesson.nextHomework || '',
+            totalTaskLength: Number(lesson.totalTaskLength ?? 0)
+        });
+    } catch (error) {
+        await t.rollback();
+        console.error('updateLessonDetail error:', error);
+        return res.status(500).json({ message: 'Lỗi server khi cập nhật buổi học' });
     }
 };
 
@@ -1306,6 +1441,8 @@ module.exports = {
     deleteManager,
     getManagerClasses,
     createLesson,
+    deleteLesson,
+    updateLessonDetail,
     createLessonFromExcel,
     getClassStudents,
     getManagerAvailableStudents,

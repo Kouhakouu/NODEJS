@@ -45,6 +45,11 @@ module.exports = (sequelize, DataTypes) => {
             type: DataTypes.STRING,
             allowNull: true
         },
+        // "BTVN tuần sau": văn bản tự do, không dùng để chấm điểm
+        nextHomework: {
+            type: DataTypes.TEXT,
+            allowNull: true
+        },
         isLocked: {
             type: DataTypes.BOOLEAN,
             defaultValue: false // Mặc định là không khóa
@@ -57,6 +62,11 @@ module.exports = (sequelize, DataTypes) => {
         // --- THÊM PHẦN HOOKS NÀY ---
         hooks: {
             beforeSave: (lesson) => {
+                // Chỉ tính lại khi tạo mới hoặc homeworkList thay đổi, để các lần lưu khác
+                // (sửa nội dung, "BTVN tuần sau"...) không ghi đè tổng số BTVN đã đặt tay.
+                if (!lesson.isNewRecord && !lesson.changed('homeworkList')) {
+                    return;
+                }
                 // Kiểm tra xem homeworkList có thay đổi không hoặc có giá trị không
                 if (lesson.homeworkList) {
                     // Tách chuỗi bằng dấu phẩy, lọc bỏ các phần tử rỗng và khoảng trắng

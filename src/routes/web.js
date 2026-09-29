@@ -122,6 +122,8 @@ let initWebRoutes = (app) => {
     router.put('/manager/lessons/:lessonId/students/:studentId/attendance', managerOnly, managerController.updateStudentAttendance);
     router.get('/manager/classes/:classId/lessons/:lessonId', managerOnly, managerController.getLessonDetail);
     router.put('/manager/lessons/:lessonId/lock', managerOnly, managerController.toggleLessonLock);
+    router.put('/manager/classes/:classId/lessons/:lessonId', managerOnly, managerController.updateLessonDetail);
+    router.delete('/manager/classes/:classId/lessons/:lessonId', managerOnly, managerController.deleteLesson);
     router.post('/manager/classes/:classId/lessons/:lessonId/send-results-emails', managerOnly, managerController.sendLessonResultsEmails);
     // Quiz nội quy: trợ giảng mới (status=0) làm sau khi đăng nhập — chỉ cần đăng nhập, không khóa role
     router.post('/manager/quiz/submit', authMiddleware, managerController.submitQuizAnswers);

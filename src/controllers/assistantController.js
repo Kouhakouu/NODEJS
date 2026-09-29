@@ -333,7 +333,7 @@ const getClassStudentDetail = async (req, res) => {
                 {
                     model: db.Student,
                     as: 'students',
-                    attributes: ['id', 'fullName', 'DOB', 'school', 'parentPhoneNumber', 'parentEmail'],
+                    attributes: ['id', 'fullName', 'DOB', 'school'],
                     required: false, // returns the class even if there are no students
                     through: { attributes: [] }
                 },
@@ -375,7 +375,7 @@ const getAssistantLessons = async (req, res) => {
                 {
                     model: db.Lesson,
                     as: 'lessons',
-                    attributes: ['id', 'lessonContent', 'totalTaskLength', 'lessonDate', 'isLocked'],
+                    attributes: ['id', 'lessonContent', 'nextHomework', 'totalTaskLength', 'lessonDate', 'isLocked'],
                 }
             ]
         });
@@ -413,10 +413,14 @@ const getLessonStudentsPerformance = async (req, res) => {
         });
 
         // Thông tin học sinh + StudentPerformance: 2 query độc lập, chạy song song
+        // Trợ giảng không được xem thông tin liên hệ phụ huynh (chỉ manager mới có)
+        const canSeeParentInfo = req.user?.role !== 'ASSISTANT';
         const [students, performances] = await Promise.all([
             db.Student.findAll({
                 where: { id: { [db.Sequelize.Op.in]: studentIds } },
-                attributes: ['id', 'fullName', 'school', 'parentPhoneNumber', 'parentEmail']
+                attributes: canSeeParentInfo
+                    ? ['id', 'fullName', 'school', 'parentPhoneNumber', 'parentEmail']
+                    : ['id', 'fullName', 'school']
             }),
             db.StudentPerformance.findAll({
                 include: [
@@ -453,8 +457,10 @@ const getLessonStudentsPerformance = async (req, res) => {
                 id: student.id,
                 fullName: student.fullName,
                 school: student.school,
-                parentPhoneNumber: student.parentPhoneNumber,
-                parentEmail: student.parentEmail,
+                ...(canSeeParentInfo && {
+                    parentPhoneNumber: student.parentPhoneNumber,
+                    parentEmail: student.parentEmail
+                }),
                 attendance: ls ? ls.attendance : false,
                 performance: perf ? {
                     doneTask: perf.doneTask,
@@ -612,10 +618,17 @@ const updateLessonContent = async (req, res) => {
             return res.status(403).json({ message: 'Buổi học đã bị chốt, không thể thay đổi nội dung buổi học!' });
         }
 
-        const { lessonContent } = req.body;
+        // Có thể gửi lessonContent, nextHomework ("BTVN tuần sau", văn bản tự do) hoặc cả hai
+        const { lessonContent, nextHomework } = req.body;
 
-        if (!lessonContent || lessonContent.trim() === '') {
+        if (lessonContent === undefined && nextHomework === undefined) {
+            return res.status(400).json({ message: 'Thiếu dữ liệu cần cập nhật.' });
+        }
+        if (lessonContent !== undefined && (typeof lessonContent !== 'string' || lessonContent.trim() === '')) {
             return res.status(400).json({ message: 'Nội dung buổi học không được để trống.' });
+        }
+        if (nextHomework !== undefined && typeof nextHomework !== 'string') {
+            return res.status(400).json({ message: 'BTVN tuần sau phải là văn bản.' });
         }
 
         // Kiểm tra buổi học có tồn tại
@@ -632,7 +645,8 @@ const updateLessonContent = async (req, res) => {
         }
 
         // Cập nhật nội dung và lưu
-        lesson.lessonContent = lessonContent;
+        if (lessonContent !== undefined) lesson.lessonContent = lessonContent;
+        if (nextHomework !== undefined) lesson.nextHomework = nextHomework.trim();
         await lesson.save();
 
         return res.status(200).json({
@@ -640,6 +654,7 @@ const updateLessonContent = async (req, res) => {
             lesson: {
                 id: lesson.id,
                 lessonContent: lesson.lessonContent,
+                nextHomework: lesson.nextHomework || '',
                 lessonDate: lesson.lessonDate,
                 totalTaskLength: lesson.totalTaskLength
             }
@@ -665,7 +680,7 @@ const getLessonInfo = async (req, res) => {
 
         // Lấy thông tin buổi học
         const lesson = await db.Lesson.findByPk(lessonId, {
-            attributes: ['id', 'lessonDate', 'lessonContent', 'totalTaskLength', 'homeworkList', 'isLocked']
+            attributes: ['id', 'lessonDate', 'lessonContent', 'nextHomework', 'totalTaskLength', 'homeworkList', 'isLocked']
         });
 
         if (!lesson) {
