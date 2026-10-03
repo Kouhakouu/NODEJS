@@ -308,8 +308,27 @@ const deleteLesson = async (req, res) => {
     }
 };
 
-// Chuẩn hoá họ tên để so khớp: bỏ khoảng trắng thừa, không phân biệt hoa thường
-const normalizeStudentName = (name) => String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+// Dấu thanh tiếng Việt (huyền, sắc, ngã, hỏi, nặng) ở dạng ký tự tổ hợp sau NFD
+const VN_TONE_MARKS = /[̣̀́̃̉]/g;
+const INVISIBLE_CHARS = /[​-‍﻿]/g;
+
+// Họ tên để lưu/hiển thị: Unicode dựng sẵn, bỏ ký tự ẩn và khoảng trắng thừa
+const cleanStudentName = (name) => String(name || '')
+    .normalize('NFC')
+    .replace(INVISIBLE_CHARS, '')
+    .trim()
+    .replace(/\s+/g, ' ');
+
+// Chuẩn hoá họ tên để so khớp: không phân biệt hoa thường, Unicode dựng sẵn/tổ hợp
+// và kiểu bỏ dấu cũ/mới ("Hoà" = "Hòa") bằng cách dời dấu thanh về cuối mỗi tiếng
+const normalizeStudentName = (name) => String(name || '')
+    .normalize('NFD')
+    .replace(INVISIBLE_CHARS, '')
+    .toLowerCase()
+    .trim()
+    .split(/\s+/)
+    .map(word => word.replace(VN_TONE_MARKS, '') + (word.match(VN_TONE_MARKS) || []).join(''))
+    .join(' ');
 
 // DOB trong DB là DATEONLY nên luôn quy về chuỗi 'YYYY-MM-DD' trước khi so khớp
 const normalizeDOB = (dob) => {
@@ -326,15 +345,229 @@ const normalizeDOB = (dob) => {
 
 const studentMatchKey = (name, dob) => `${normalizeStudentName(name)}|${normalizeDOB(dob)}`;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const shiftDOB = (dob, days) => new Date(Date.parse(dob) + days * DAY_MS).toISOString().slice(0, 10);
+
+// Các lần import trước lưu ngày sinh bị lùi 1 ngày (lỗi múi giờ khi đọc Excel ở frontend),
+// nên khi trùng họ tên thì chấp nhận ngày sinh lệch tối đa 1 ngày
+const isNearDOB = (a, b) => {
+    const left = normalizeDOB(a);
+    const right = normalizeDOB(b);
+    if (!left || !right) return false;
+    return Math.abs(Date.parse(left) - Date.parse(right)) <= DAY_MS;
+};
+
+// Chỉ nhận khi có đúng một học sinh trùng tên và ngày sinh gần khớp, tránh gán nhầm
+const findUniqueNearMatch = (students, row) => {
+    const matches = students.filter(student =>
+        normalizeStudentName(student.fullName) === row.nameKey && isNearDOB(student.DOB, row.DOB)
+    );
+    return matches.length === 1 ? matches[0] : null;
+};
+
 // Model Student validate isEmail nên email sai định dạng trong file phải bỏ đi thay vì làm hỏng cả import
 const sanitizeStudentEmail = (email) => {
     const value = String(email || '').trim();
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? value : null;
 };
 
-// Tạo buổi học từ danh sách học viên đọc trong file Excel (frontend đã parse sẵn thành JSON)
+// Trạng thái học trong file Excel ("Đang học", "Bảo lưu", "Chờ thanh toán"...) -> so khớp không dấu
+const normalizeStudyStatus = (status) => String(status || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/đ/gi, 'd')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, ' ');
+
+// Chỉ học sinh "Đang học" mới được dùng khi import, các trạng thái khác bị bỏ qua
+const isActiveStudyStatus = (status) => normalizeStudyStatus(status) === 'dang hoc';
+
+const cleanText = (value) => String(value || '').normalize('NFC').trim().replace(/\s+/g, ' ');
+
+// File Excel đôi khi nhập sai năm sinh (vd: học sinh lớp 7 sinh năm 2025).
+// Ngày sinh phải từ 1990 trở đi và học sinh ít nhất 3 tuổi mới được dùng để tạo/cập nhật hồ sơ.
+const MIN_STUDENT_AGE_YEARS = 3;
+const isPlausibleDOB = (dob) => {
+    const time = Date.parse(dob);
+    if (Number.isNaN(time)) return false;
+    const now = new Date();
+    const latest = Date.UTC(now.getUTCFullYear() - MIN_STUDENT_AGE_YEARS, now.getUTCMonth(), now.getUTCDate());
+    return time >= Date.UTC(1990, 0, 1) && time <= latest;
+};
+
+// Thông tin hồ sơ lấy theo file:
+// - Trường học, email: theo đúng file, ô trống trong file thì xoá trắng trong hồ sơ.
+//   Riêng email sai định dạng thì giữ email cũ (không coi là ô trống).
+// - Ngày sinh: bắt buộc trong DB nên chỉ cập nhật khi file có ngày sinh hợp lệ.
+const computeProfileChanges = (student, row) => {
+    const changes = [];
+    const currentDOB = normalizeDOB(student.DOB);
+    if (row.DOB && !row.DOBWarning && row.DOB !== currentDOB) {
+        changes.push({ field: 'DOB', label: 'Ngày sinh', from: currentDOB || null, to: row.DOB });
+    }
+    if ((row.school || null) !== (cleanText(student.school) || null)) {
+        changes.push({ field: 'school', label: 'Trường học', from: student.school || null, to: row.school || null });
+    }
+    const currentEmail = String(student.parentEmail || '').trim().toLowerCase() || null;
+    if (!row.emailWarning && (row.parentEmail || null) !== currentEmail) {
+        changes.push({ field: 'parentEmail', label: 'Email phụ huynh', from: student.parentEmail || null, to: row.parentEmail || null });
+    }
+    // SĐT phụ huynh chỉ bổ sung khi hồ sơ đang trống (giữ hành vi cũ), không ghi đè
+    if (row.parentPhoneNumber && !student.parentPhoneNumber) {
+        changes.push({ field: 'parentPhoneNumber', label: 'SĐT phụ huynh', from: null, to: row.parentPhoneNumber });
+    }
+    return changes;
+};
+
+// Chuẩn hoá danh sách học sinh frontend gửi lên (đã parse từ Excel):
+// bỏ học sinh không "Đang học", dòng thiếu tên và dòng trùng (cùng tên + ngày sinh)
+const parseExcelStudentRows = (students) => {
+    const seenKeys = new Set();
+    const rows = [];
+    const skipped = [];
+    const inactive = [];
+
+    students.forEach((raw, index) => {
+        const rowNumber = Number.isInteger(raw?.rowNumber) ? raw.rowNumber : index + 1;
+        const fullName = cleanStudentName(raw?.fullName);
+        const studyStatus = String(raw?.studyStatus || '').trim();
+
+        if (!fullName) {
+            skipped.push({ rowNumber, fullName: '', reason: 'Thiếu họ tên học sinh' });
+            return;
+        }
+        const DOB = normalizeDOB(raw?.DOB);
+        if (!isActiveStudyStatus(studyStatus)) {
+            inactive.push({ rowNumber, fullName, DOB, studyStatus: studyStatus || 'Không rõ' });
+            return;
+        }
+
+        const key = studentMatchKey(fullName, DOB);
+        if (seenKeys.has(key)) {
+            skipped.push({ rowNumber, fullName, reason: 'Trùng với một dòng khác trong file' });
+            return;
+        }
+        seenKeys.add(key);
+
+        rows.push({
+            key,
+            nameKey: normalizeStudentName(fullName),
+            rowNumber,
+            fullName,
+            DOB,
+            DOBWarning: DOB && !isPlausibleDOB(DOB)
+                ? `Ngày sinh trong file (${DOB.split('-').reverse().join('/')}) bất thường`
+                : null,
+            school: cleanText(raw?.school) || null,
+            // Email không phân biệt hoa thường, lưu chữ thường cho thống nhất
+            parentEmail: sanitizeStudentEmail(raw?.parentEmail)?.toLowerCase() || null,
+            emailWarning: String(raw?.parentEmail || '').trim() && !sanitizeStudentEmail(raw?.parentEmail)
+                ? `Email trong file (${String(raw.parentEmail).trim()}) sai định dạng nên không được dùng`
+                : null,
+            parentPhoneNumber: String(raw?.parentPhoneNumber || '').trim() || null
+        });
+    });
+
+    return { rows, skipped, inactive };
+};
+
+const validateExcelStudentsPayload = (students) => {
+    if (!Array.isArray(students) || students.length === 0) {
+        const error = new Error('Danh sách học sinh từ file Excel đang trống');
+        error.statusCode = 400;
+        throw error;
+    }
+    const parsed = parseExcelStudentRows(students);
+    if (parsed.rows.length === 0) {
+        const error = new Error('File Excel không có học sinh nào ở trạng thái "Đang học"');
+        error.statusCode = 400;
+        throw error;
+    }
+    return parsed;
+};
+
+const findClassStudents = (classId, transaction) => db.Student.findAll({
+    attributes: ['id', 'fullName', 'DOB', 'school', 'parentEmail', 'parentPhoneNumber'],
+    include: [{
+        model: db.Class,
+        as: 'classes',
+        where: { id: classId },
+        attributes: [],
+        through: { attributes: [] }
+    }],
+    order: [['fullName', 'ASC']],
+    transaction
+});
+
+// So khớp các dòng trong file với học sinh đang có trong lớp
+const matchRowsInClass = (rows, classStudents) => {
+    const byKey = new Map();
+    const byName = new Map();
+    classStudents.forEach(student => {
+        byKey.set(studentMatchKey(student.fullName, student.DOB), student);
+        const nameKey = normalizeStudentName(student.fullName);
+        // Trùng tên trong lớp -> không dùng riêng tên để so khớp nữa
+        byName.set(nameKey, byName.has(nameKey) ? null : student);
+    });
+
+    const matched = new Map(); // row.key -> student
+    const unmatchedRows = [];
+    rows.forEach(row => {
+        // Trong phạm vi một lớp, trùng họ tên gần như chắc chắn là cùng một học sinh
+        // nên vẫn nhận nếu ngày sinh trong file lệch với hồ sơ đang lưu.
+        const student = byKey.get(row.key)
+            || byName.get(row.nameKey)
+            || findUniqueNearMatch(classStudents, row);
+        if (student) {
+            matched.set(row.key, student);
+        } else {
+            unmatchedRows.push(row);
+        }
+    });
+
+    return { matched, unmatchedRows };
+};
+
+const toStudentSummary = (student) => ({
+    id: student.id,
+    fullName: student.fullName,
+    DOB: normalizeDOB(student.DOB)
+});
+
+// Chế độ "Tạo buổi học": chỉ đọc danh sách lớp, không tạo/sửa hồ sơ học sinh và không đổi sĩ số.
+// Mọi học sinh trong lớp đều có mặt trong buổi học; ai "Đang học" trong file thì có mặt, còn lại vắng.
+const buildLessonImportPlan = async (classId, rows, transaction) => {
+    const classStudents = await findClassStudents(classId, transaction);
+    const { matched, unmatchedRows } = matchRowsInClass(rows, classStudents);
+
+    const presentIds = new Set([...matched.values()].map(student => student.id));
+    const roster = classStudents.map(student => ({
+        ...toStudentSummary(student),
+        attendance: presentIds.has(student.id)
+    }));
+
+    return {
+        classStudents,
+        roster,
+        presentIds,
+        matchedRows: rows
+            .filter(row => matched.has(row.key))
+            .map(row => ({
+                rowNumber: row.rowNumber,
+                fullName: row.fullName,
+                DOB: row.DOB,
+                student: toStudentSummary(matched.get(row.key))
+            })),
+        notInClass: unmatchedRows.map(row => ({ rowNumber: row.rowNumber, fullName: row.fullName, DOB: row.DOB }))
+    };
+};
+
+// Tạo buổi học từ file Excel danh sách học viên (frontend đã parse sẵn thành JSON).
+// dryRun = true: chỉ trả về bản xem trước, không ghi gì vào DB.
 const createLessonFromExcel = async (req, res) => {
-    const t = await db.sequelize.transaction();
+    let t = null;
     try {
         const classId = parseInt(req.params.classId, 10);
         const {
@@ -342,183 +575,54 @@ const createLessonFromExcel = async (req, res) => {
             lessonContent = '',
             homeworkList = '',
             students,
-            syncClassRoster = true
+            dryRun = false
         } = req.body;
 
-        if (!classId || !lessonDate) {
-            await t.rollback();
-            return res.status(400).json({ message: 'classId và lessonDate là bắt buộc' });
+        if (!classId) {
+            return res.status(400).json({ message: 'classId không hợp lệ' });
         }
-        if (!Array.isArray(students) || students.length === 0) {
-            await t.rollback();
-            return res.status(400).json({ message: 'Danh sách học sinh từ file Excel đang trống' });
+        if (!dryRun && !lessonDate) {
+            return res.status(400).json({ message: 'lessonDate là bắt buộc' });
         }
 
+        const { rows, skipped, inactive } = validateExcelStudentsPayload(students);
+
+        if (!dryRun) t = await db.sequelize.transaction();
         const { classroom } = await getManagedClass(req.user.userId, classId, { transaction: t });
+        const plan = await buildLessonImportPlan(classId, rows, t);
 
-        // Chuẩn hoá + loại bỏ dòng trùng (cùng tên + ngày sinh) trong file
-        const seenKeys = new Set();
-        const skipped = [];
-        const rows = [];
-        students.forEach((raw, index) => {
-            const fullName = String(raw?.fullName || '').trim().replace(/\s+/g, ' ');
-            const DOB = normalizeDOB(raw?.DOB);
-
-            if (!fullName) {
-                skipped.push({ row: index + 1, fullName: '', reason: 'Thiếu họ tên học sinh' });
-                return;
-            }
-            const key = studentMatchKey(fullName, DOB);
-            if (seenKeys.has(key)) {
-                skipped.push({ row: index + 1, fullName, reason: 'Trùng với một dòng khác trong file' });
-                return;
-            }
-            seenKeys.add(key);
-
-            rows.push({
-                key,
-                rowNumber: index + 1,
-                fullName,
-                DOB,
-                school: String(raw?.school || '').trim() || null,
-                parentEmail: sanitizeStudentEmail(raw?.parentEmail),
-                parentPhoneNumber: String(raw?.parentPhoneNumber || '').trim() || null,
-                studentCode: String(raw?.studentCode || '').trim() || null,
-                studyStatus: String(raw?.studyStatus || '').trim() || null,
-                attendance: raw?.attendance !== false
-            });
-        });
-
-        if (rows.length === 0) {
-            await t.rollback();
-            return res.status(400).json({ message: 'Không có dòng học sinh hợp lệ trong file Excel', skipped });
-        }
-
-        // 1) Học sinh đang có trong lớp
-        const classStudents = await db.Student.findAll({
-            include: [{
-                model: db.Class,
-                as: 'classes',
-                where: { id: classId },
-                attributes: [],
-                through: { attributes: [] }
-            }],
-            transaction: t
-        });
-
-        const byKey = new Map();
-        const byName = new Map();
-        const indexStudent = (student) => {
-            byKey.set(studentMatchKey(student.fullName, student.DOB), student);
-            const nameKey = normalizeStudentName(student.fullName);
-            if (byName.has(nameKey)) {
-                byName.set(nameKey, null); // trùng tên -> không dùng tên để so khớp nữa
-            } else {
-                byName.set(nameKey, student);
-            }
+        const summary = {
+            totalRows: students.length,
+            activeRows: rows.length,
+            inactiveCount: inactive.length,
+            classSize: plan.roster.length,
+            presentCount: plan.presentIds.size,
+            absentCount: plan.roster.length - plan.presentIds.size,
+            notInClassCount: plan.notInClass.length,
+            skippedCount: skipped.length
         };
-        classStudents.forEach(indexStudent);
+        const preview = {
+            class: { id: classroom.id, className: classroom.className },
+            summary,
+            roster: plan.roster,
+            matchedRows: plan.matchedRows,
+            notInClass: plan.notInClass,
+            inactive,
+            skipped
+        };
 
-        const classStudentIds = new Set(classStudents.map(student => student.id));
-
-        const resolved = new Map(); // row.key -> { student, origin }
-        const unresolvedRows = rows.filter((row) => {
-            // Trong phạm vi một lớp, trùng họ tên gần như chắc chắn là cùng một học sinh
-            // nên vẫn nhận nếu ngày sinh trong file lệch với hồ sơ đang lưu.
-            const matched = byKey.get(row.key) || byName.get(normalizeStudentName(row.fullName));
-            if (matched) {
-                resolved.set(row.key, { student: matched, origin: 'class' });
-                return false;
-            }
-            return true;
-        });
-
-        // 2) Học sinh đã có trong hệ thống nhưng chưa thuộc lớp này
-        if (unresolvedRows.length > 0) {
-            const dobList = [...new Set(unresolvedRows.map(r => r.DOB).filter(Boolean))];
-            const nameList = [...new Set(unresolvedRows.map(r => r.fullName))];
-            const orConditions = [];
-            if (dobList.length > 0) orConditions.push({ DOB: { [db.Sequelize.Op.in]: dobList } });
-            if (nameList.length > 0) orConditions.push({ fullName: { [db.Sequelize.Op.in]: nameList } });
-
-            const candidates = orConditions.length > 0
-                ? await db.Student.findAll({
-                    where: { [db.Sequelize.Op.or]: orConditions },
-                    transaction: t
-                })
-                : [];
-
-            const globalByKey = new Map();
-            candidates.forEach(student => {
-                const key = studentMatchKey(student.fullName, student.DOB);
-                if (!globalByKey.has(key)) globalByKey.set(key, student);
-            });
-
-            unresolvedRows.forEach(row => {
-                const matched = globalByKey.get(row.key);
-                if (matched) resolved.set(row.key, { student: matched, origin: 'system' });
-            });
+        if (dryRun) {
+            return res.status(200).json(preview);
         }
 
-        // 3) Học sinh hoàn toàn mới -> tạo mới (bắt buộc phải có ngày sinh vì DOB NOT NULL)
-        const toCreate = [];
-        rows.forEach(row => {
-            if (resolved.has(row.key)) return;
-            if (!row.DOB) {
-                skipped.push({
-                    row: row.rowNumber,
-                    fullName: row.fullName,
-                    reason: 'Học sinh mới nhưng thiếu ngày sinh nên không thể tạo hồ sơ'
-                });
-                return;
-            }
-            toCreate.push(row);
-        });
-
-        for (const row of toCreate) {
-            const created = await db.Student.create({
-                fullName: row.fullName,
-                DOB: row.DOB,
-                school: row.school,
-                parentPhoneNumber: row.parentPhoneNumber,
-                parentEmail: row.parentEmail
-            }, { transaction: t });
-            resolved.set(row.key, { student: created, origin: 'created' });
-        }
-
-        // Bổ sung thông tin còn trống cho học sinh đã có (không ghi đè dữ liệu cũ)
-        for (const row of rows) {
-            const entry = resolved.get(row.key);
-            if (!entry || entry.origin === 'created') continue;
-            const patch = {};
-            if (!entry.student.school && row.school) patch.school = row.school;
-            if (!entry.student.parentEmail && row.parentEmail) patch.parentEmail = row.parentEmail;
-            if (!entry.student.parentPhoneNumber && row.parentPhoneNumber) patch.parentPhoneNumber = row.parentPhoneNumber;
-            if (Object.keys(patch).length > 0) {
-                await entry.student.update(patch, { transaction: t });
-            }
-        }
-
-        const usableRows = rows.filter(row => resolved.has(row.key));
-        if (usableRows.length === 0) {
+        if (plan.presentIds.size === 0) {
             await t.rollback();
-            return res.status(400).json({ message: 'Không thể xác định học sinh nào từ file Excel', skipped });
+            return res.status(400).json({
+                message: 'Không có học sinh nào trong file khớp với danh sách lớp. Hãy kiểm tra lại file hoặc lớp đang chọn.',
+                ...preview
+            });
         }
 
-        // 4) Đồng bộ sĩ số lớp
-        // Bảng Student_Classes không có unique index nên phải tự lọc để tránh ghi trùng
-        const newLinkStudentIds = [...new Set(
-            usableRows
-                .map(row => resolved.get(row.key).student.id)
-                .filter(studentId => !classStudentIds.has(studentId))
-        )];
-        const newClassLinks = newLinkStudentIds.map(studentId => ({ classId, studentId }));
-
-        if (syncClassRoster && newClassLinks.length > 0) {
-            await db.Student_Classes.bulkCreate(newClassLinks, { transaction: t });
-        }
-
-        // 5) Tạo buổi học + snapshot điểm danh theo file Excel
         const newLesson = await db.Lesson.create({
             lessonContent: lessonContent || '',
             homeworkList: homeworkList || null,
@@ -531,49 +635,363 @@ const createLessonFromExcel = async (req, res) => {
             classId
         }, { transaction: t });
 
-        const lessonStudentRows = [];
-        const seenStudentIds = new Set();
-        usableRows.forEach(row => {
-            const studentId = resolved.get(row.key).student.id;
-            if (seenStudentIds.has(studentId)) return;
-            seenStudentIds.add(studentId);
-            lessonStudentRows.push({
-                lessonId: newLesson.id,
-                studentId,
-                attendance: row.attendance
-            });
-        });
-
-        if (lessonStudentRows.length > 0) {
-            await db.LessonStudent.bulkCreate(lessonStudentRows, {
-                ignoreDuplicates: true,
-                transaction: t
-            });
+        // Giống tạo buổi học thường: snapshot toàn bộ sĩ số lớp vào Lesson_Students,
+        // để trợ giảng chấm bài và quản lý gửi mail cho đủ học sinh của lớp
+        if (plan.roster.length > 0) {
+            await db.LessonStudent.bulkCreate(
+                plan.roster.map(student => ({
+                    lessonId: newLesson.id,
+                    studentId: student.id,
+                    attendance: student.attendance
+                })),
+                { ignoreDuplicates: true, transaction: t }
+            );
         }
 
         await t.commit();
 
+        return res.status(201).json({
+            message: `Đã tạo buổi học: ${summary.presentCount} có mặt, ${summary.absentCount} vắng.`,
+            lesson: newLesson,
+            ...preview
+        });
+    } catch (error) {
+        if (t) await t.rollback();
+        console.error('createLessonFromExcel error:', error);
+        return sendControllerError(res, error, 'Không thể tạo buổi học từ file Excel');
+    }
+};
+
+// Chế độ "Cập nhật danh sách lớp": xác định từng dòng trong file sẽ được xử lý thế nào.
+// action: 'inClass' (đã trong lớp) | 'link' (hồ sơ có sẵn, thêm vào lớp) | 'create' (tạo hồ sơ mới) | 'skip'
+// toRemove: học sinh của lớp không khớp dòng "Đang học" nào trong file
+const buildRosterImportPlan = async (classId, rows, inactive, transaction) => {
+    const classStudents = await findClassStudents(classId, transaction);
+    const { matched, unmatchedRows } = matchRowsInClass(rows, classStudents);
+
+    const systemMatched = new Map(); // row.key -> student đã có trong hệ thống nhưng chưa thuộc lớp
+    const nameOnlyKeys = new Set(); // các dòng khớp chỉ theo họ tên (file thiếu ngày sinh)
+    if (unmatchedRows.length > 0) {
+        // Lấy cả ngày sinh ±1 ngày để bắt được hồ sơ bị lưu lệch ngày từ các lần import trước
+        const dobList = [...new Set(
+            unmatchedRows
+                .filter(r => r.DOB)
+                .flatMap(r => [shiftDOB(r.DOB, -1), r.DOB, shiftDOB(r.DOB, 1)])
+        )];
+        // Postgres so sánh chuỗi chính xác từng byte nên gửi cả dạng dựng sẵn lẫn tổ hợp
+        const nameList = [...new Set(
+            unmatchedRows.flatMap(r => [r.fullName, r.fullName.normalize('NFD')])
+        )];
+        const orConditions = [{ fullName: { [db.Sequelize.Op.in]: nameList } }];
+        if (dobList.length > 0) orConditions.push({ DOB: { [db.Sequelize.Op.in]: dobList } });
+
+        const candidates = await db.Student.findAll({
+            where: { [db.Sequelize.Op.or]: orConditions },
+            include: [{
+                model: db.Class,
+                as: 'classes',
+                attributes: ['id', 'className'],
+                through: { attributes: [] },
+                required: false
+            }],
+            transaction
+        });
+
+        const globalByKey = new Map();
+        candidates.forEach(student => {
+            const key = studentMatchKey(student.fullName, student.DOB);
+            if (!globalByKey.has(key)) globalByKey.set(key, student);
+        });
+
+        unmatchedRows.forEach(row => {
+            let student = globalByKey.get(row.key) || findUniqueNearMatch(candidates, row);
+            // File hay để trống ngày sinh: nhận theo họ tên nếu cả hệ thống chỉ có đúng một hồ sơ trùng tên
+            if (!student && !row.DOB) {
+                const sameName = candidates.filter(c => normalizeStudentName(c.fullName) === row.nameKey);
+                if (sameName.length === 1) {
+                    student = sameName[0];
+                    nameOnlyKeys.add(row.key);
+                }
+            }
+            if (student) systemMatched.set(row.key, student);
+        });
+    }
+
+    const rowWarnings = (row) => [
+        row.DOBWarning && `${row.DOBWarning}, giữ nguyên ngày sinh cũ`,
+        row.emailWarning
+    ].filter(Boolean);
+
+    const entries = rows.map(row => {
+        const base = {
+            row,
+            rowNumber: row.rowNumber,
+            fullName: row.fullName,
+            DOB: row.DOB,
+            dobInvalid: !!row.DOBWarning,
+            warnings: [],
+            changes: []
+        };
+        if (matched.has(row.key)) {
+            return { ...base, action: 'inClass', student: matched.get(row.key), warnings: rowWarnings(row) };
+        }
+        if (systemMatched.has(row.key)) {
+            return {
+                ...base,
+                action: 'link',
+                student: systemMatched.get(row.key),
+                warnings: [
+                    nameOnlyKeys.has(row.key) && 'Khớp chỉ theo họ tên vì file thiếu ngày sinh, hãy kiểm tra lại',
+                    ...rowWarnings(row)
+                ].filter(Boolean)
+            };
+        }
+        if (!row.DOB) {
+            return { ...base, action: 'skip', reason: 'Học sinh mới nhưng thiếu ngày sinh nên không thể tạo hồ sơ' };
+        }
+        if (row.DOBWarning) {
+            return { ...base, action: 'skip', reason: 'Học sinh mới nhưng ngày sinh bất thường, hãy sửa lại file' };
+        }
+        return { ...base, action: 'create', warnings: [row.emailWarning].filter(Boolean) };
+    });
+
+    // Hai dòng khác nhau trong file có thể cùng khớp một hồ sơ -> chỉ xử lý dòng đầu tiên,
+    // tránh thêm vào lớp hai lần hoặc cập nhật hồ sơ bằng hai bộ thông tin khác nhau
+    const seenStudentIds = new Set();
+    entries.forEach(entry => {
+        if (entry.action !== 'inClass' && entry.action !== 'link') return;
+        if (seenStudentIds.has(entry.student.id)) {
+            entry.action = 'skip';
+            entry.reason = 'Trùng hồ sơ với một dòng khác trong file';
+            return;
+        }
+        seenStudentIds.add(entry.student.id);
+        entry.changes = computeProfileChanges(entry.student, entry.row);
+    });
+
+    // Danh sách lớp lấy theo file: học sinh của lớp không khớp dòng "Đang học" nào sẽ bị xoá khỏi lớp.
+    // Đối chiếu thêm với các dòng "Bảo lưu"/"Chờ thanh toán"... chỉ để ghi rõ lý do xoá.
+    const { matched: inactiveMatched } = matchRowsInClass(
+        inactive.map(r => ({ ...r, key: studentMatchKey(r.fullName, r.DOB), nameKey: normalizeStudentName(r.fullName) })),
+        classStudents
+    );
+    const inactiveByStudentId = new Map();
+    inactive.forEach(r => {
+        const student = inactiveMatched.get(studentMatchKey(r.fullName, r.DOB));
+        if (student && !inactiveByStudentId.has(student.id)) inactiveByStudentId.set(student.id, r);
+    });
+
+    const inFileIds = new Set(entries.filter(e => e.action === 'inClass').map(e => e.student.id));
+    const toRemove = classStudents
+        .filter(student => !inFileIds.has(student.id))
+        .map(student => {
+            const inactiveRow = inactiveByStudentId.get(student.id);
+            return {
+                ...toStudentSummary(student),
+                reason: inactiveRow
+                    ? `Trạng thái "${inactiveRow.studyStatus}" trong file (dòng ${inactiveRow.rowNumber})`
+                    : 'Không có trong file'
+            };
+        });
+
+    return { entries, toRemove, classSize: classStudents.length };
+};
+
+const toRosterPreviewEntry = (entry) => ({
+    rowNumber: entry.rowNumber,
+    fullName: entry.fullName,
+    DOB: entry.DOB,
+    action: entry.action,
+    reason: entry.reason,
+    dobInvalid: entry.dobInvalid,
+    warnings: entry.warnings,
+    changes: entry.changes,
+    student: entry.student ? {
+        ...toStudentSummary(entry.student),
+        classes: (entry.student.classes || []).map(c => ({ id: c.id, className: c.className }))
+    } : null
+});
+
+const findOpenLessonIds = async (classId, transaction) => {
+    const openLessons = await db.Lesson.findAll({
+        attributes: ['id'],
+        where: { isLocked: false },
+        include: [{
+            model: db.Class,
+            where: { id: classId },
+            attributes: [],
+            through: { attributes: [] }
+        }],
+        transaction
+    });
+    return openLessons.map(lesson => lesson.id);
+};
+
+// Cập nhật danh sách lớp theo file Excel: lớp chỉ còn đúng các học sinh "Đang học" trong file.
+// - Thêm học sinh chưa có trong lớp (dùng hồ sơ có sẵn hoặc tạo mới)
+// - Cập nhật ngày sinh / trường / email theo file
+// - Xoá khỏi lớp học sinh không có trong file hoặc không "Đang học" (hồ sơ vẫn giữ),
+//   trừ các học sinh quản lý chọn giữ lại (keepStudentIds)
+// dryRun = true: chỉ trả về bản xem trước.
+const importClassStudentsFromExcel = async (req, res) => {
+    let t = null;
+    try {
+        const classId = parseInt(req.params.classId, 10);
+        const { students, dryRun = false, keepStudentIds = [], excludeRowNumbers = [] } = req.body;
+        if (!classId) {
+            return res.status(400).json({ message: 'classId không hợp lệ' });
+        }
+
+        const { rows, skipped, inactive } = validateExcelStudentsPayload(students);
+
+        if (!dryRun) t = await db.sequelize.transaction();
+        const { classroom } = await getManagedClass(req.user.userId, classId, { transaction: t });
+        const plan = await buildRosterImportPlan(classId, rows, inactive, t);
+
+        const keepIds = new Set((Array.isArray(keepStudentIds) ? keepStudentIds : []).map(Number));
+        const removeIds = plan.toRemove.map(s => s.id).filter(id => !keepIds.has(id));
+
+        // Dòng quản lý bỏ chọn: không thêm vào lớp, không tạo hồ sơ và không sửa hồ sơ khớp
+        // (hồ sơ khớp có thể là một học sinh khác trùng tên)
+        const excludedRows = new Set((Array.isArray(excludeRowNumbers) ? excludeRowNumbers : []).map(Number));
+        plan.entries.forEach(entry => {
+            if ((entry.action === 'link' || entry.action === 'create') && excludedRows.has(entry.rowNumber)) {
+                entry.action = 'excluded';
+                entry.reason = 'Quản lý bỏ chọn, không thêm vào lớp';
+                entry.changes = [];
+            }
+        });
+
+        const countBy = (action) => plan.entries.filter(e => e.action === action).length;
         const summary = {
             totalRows: students.length,
-            matchedInClass: [...resolved.values()].filter(e => e.origin === 'class').length,
-            linkedFromSystem: [...resolved.values()].filter(e => e.origin === 'system').length,
-            createdStudents: [...resolved.values()].filter(e => e.origin === 'created').length,
-            addedToClass: syncClassRoster ? newClassLinks.length : 0,
-            attendedCount: lessonStudentRows.filter(r => r.attendance).length,
-            absentCount: lessonStudentRows.filter(r => !r.attendance).length,
+            activeRows: rows.length,
+            inactiveCount: inactive.length,
+            classSize: plan.classSize,
+            inClassCount: countBy('inClass'),
+            linkCount: countBy('link'),
+            createCount: countBy('create'),
+            excludedCount: countBy('excluded'),
+            updateCount: plan.entries.filter(e => e.changes.length > 0).length,
+            removeCount: plan.toRemove.length,
+            skippedCount: skipped.length + countBy('skip')
+        };
+        // Lớp đang có học sinh mà file không khớp em nào -> gần như chắc chắn chọn nhầm file
+        const fileMismatch = summary.classSize > 0 && summary.inClassCount === 0;
+        const preview = {
+            class: { id: classroom.id, className: classroom.className },
+            summary,
+            fileMismatch,
+            entries: plan.entries.map(toRosterPreviewEntry),
+            toRemove: plan.toRemove,
+            inactive,
             skipped
         };
 
-        return res.status(201).json({
-            message: `Đã tạo buổi học với ${lessonStudentRows.length} học sinh từ file Excel.`,
-            lesson: newLesson,
-            class: { id: classroom.id, className: classroom.className },
-            summary
+        if (dryRun) {
+            return res.status(200).json(preview);
+        }
+
+        if (fileMismatch && removeIds.length > 0) {
+            await t.rollback();
+            return res.status(400).json({
+                message: 'Không có học sinh nào trong file khớp với lớp hiện tại nên hệ thống không xoá học sinh. Hãy kiểm tra lại file hoặc lớp đang chọn.',
+                ...preview
+            });
+        }
+
+        const newStudentIds = [];
+        let updatedCount = 0;
+        for (const entry of plan.entries) {
+            if (entry.changes.length > 0) {
+                // Hồ sơ dùng chung giữa các lớp nên thông tin mới cũng hiển thị ở lớp khác của học sinh
+                const patch = Object.fromEntries(entry.changes.map(change => [change.field, change.to]));
+                await entry.student.update(patch, { transaction: t });
+                updatedCount += 1;
+            }
+            if (entry.action === 'create') {
+                const { row } = entry;
+                const created = await db.Student.create({
+                    fullName: row.fullName,
+                    DOB: row.DOB,
+                    school: row.school,
+                    parentPhoneNumber: row.parentPhoneNumber,
+                    parentEmail: row.parentEmail
+                }, { transaction: t });
+                newStudentIds.push(created.id);
+                continue;
+            }
+            if (entry.action === 'link') {
+                newStudentIds.push(entry.student.id);
+            }
+        }
+
+        const openLessonIds = newStudentIds.length > 0 || removeIds.length > 0
+            ? await findOpenLessonIds(classId, t)
+            : [];
+
+        if (newStudentIds.length > 0) {
+            // Bảng Student_Classes không có unique index; plan đã loại học sinh đang trong lớp
+            await db.Student_Classes.bulkCreate(
+                newStudentIds.map(studentId => ({ classId, studentId })),
+                { transaction: t }
+            );
+
+            // Giống "Thêm học sinh vào lớp": học sinh mới cũng có mặt trong các buổi học chưa chốt
+            const lessonStudentRows = [];
+            for (const lessonId of openLessonIds) {
+                for (const studentId of newStudentIds) {
+                    lessonStudentRows.push({ lessonId, studentId, attendance: true });
+                }
+            }
+            if (lessonStudentRows.length > 0) {
+                await db.LessonStudent.bulkCreate(lessonStudentRows, {
+                    ignoreDuplicates: true,
+                    transaction: t
+                });
+            }
+        }
+
+        if (removeIds.length > 0) {
+            // Giống "Xoá học sinh khỏi lớp": bỏ khỏi lớp và khỏi các buổi học chưa chốt,
+            // buổi học đã chốt giữ nguyên để không mất kết quả đã gửi phụ huynh
+            await db.Student_Classes.destroy({
+                where: { classId, studentId: { [db.Sequelize.Op.in]: removeIds } },
+                transaction: t
+            });
+            if (openLessonIds.length > 0) {
+                await db.LessonStudent.destroy({
+                    where: {
+                        studentId: { [db.Sequelize.Op.in]: removeIds },
+                        lessonId: { [db.Sequelize.Op.in]: openLessonIds }
+                    },
+                    transaction: t
+                });
+            }
+        }
+
+        await t.commit();
+
+        const resultParts = [];
+        if (newStudentIds.length > 0) {
+            resultParts.push(`thêm ${newStudentIds.length} học sinh vào lớp (tạo mới ${summary.createCount} hồ sơ)`);
+        }
+        if (updatedCount > 0) resultParts.push(`cập nhật thông tin ${updatedCount} học sinh`);
+        if (removeIds.length > 0) resultParts.push(`xoá ${removeIds.length} học sinh khỏi lớp`);
+
+        return res.status(200).json({
+            message: resultParts.length > 0
+                ? `Đã ${resultParts.join(', ')}.`
+                : 'Danh sách lớp và thông tin học sinh đã khớp với file, không có gì cần cập nhật.',
+            addedCount: newStudentIds.length,
+            updatedCount,
+            removedCount: removeIds.length,
+            ...preview
         });
     } catch (error) {
-        await t.rollback();
-        console.error('createLessonFromExcel error:', error);
-        return sendControllerError(res, error, 'Không thể tạo buổi học từ file Excel');
+        if (t) await t.rollback();
+        console.error('importClassStudentsFromExcel error:', error);
+        return sendControllerError(res, error, 'Không thể cập nhật danh sách lớp từ file Excel');
     }
 };
 
@@ -1129,11 +1547,13 @@ const sendLessonResultsEmails = async (req, res) => {
 
         let sent = 0;
         let failed = 0;
+        let notSavedToSent = 0;
         const errors = [];
 
         sendResults.forEach((r, i) => {
             if (r.status === "fulfilled") {
                 sent++;
+                if (r.value?.savedToSent === false) notSavedToSent++;
             } else {
                 failed++;
                 errors.push({
@@ -1160,6 +1580,7 @@ const sendLessonResultsEmails = async (req, res) => {
                 sent,
                 failed,
                 skippedNoEmail,
+                notSavedToSent,
             },
             errors,
         });
@@ -1444,6 +1865,7 @@ module.exports = {
     deleteLesson,
     updateLessonDetail,
     createLessonFromExcel,
+    importClassStudentsFromExcel,
     getClassStudents,
     getManagerAvailableStudents,
     addManagerClassStudent,
