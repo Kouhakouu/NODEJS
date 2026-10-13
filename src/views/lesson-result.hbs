@@ -7,125 +7,168 @@
     <title>[CMATH EDUCATION] ĐÁNH GIÁ KẾT QUẢ HỌC TẬP</title>
     <style>
         body {
-            font-family: Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
             margin: 0;
-            padding: 20px;
-            background-color: #f4f4f4;
+            padding: 0;
+            background-color: #ffffff;
         }
 
-        .container {
-            max-width: 600px;
+        .wrap {
+            max-width: 720px;
             margin: 0 auto;
-            background-color: #fff;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            padding: 20px 16px;
+            font-family: "Times New Roman", Times, serif;
+            font-size: 16px;
+            line-height: 1.45;
+            color: #000000;
         }
 
-        .header-info p {
-            margin: 2px 0;
-            font-size: 0.9em;
-            color: #555;
+        .info td {
+            vertical-align: top;
+            padding: 2px 0;
         }
 
-        .main-title {
-            text-align: center;
-            color: #d9534f;
-            /* Hoặc một màu cam/đỏ phù hợp với CMATH */
-            margin-top: 15px;
+        .info .dot {
+            width: 28px;
+            padding-left: 24px;
         }
 
-        .main-title h1 {
-            font-size: 1.8em;
-            margin-bottom: 5px;
+        .info .label {
+            width: 210px;
+            padding-right: 8px;
         }
 
-        .sub-title {
-            text-align: center;
-            font-size: 1.2em;
+        .section {
             font-weight: bold;
-            color: #0275d8;
-            /* Hoặc một màu xanh phù hợp */
-            margin-bottom: 15px;
-        }
-
-        hr {
-            border: 0;
-            border-top: 1px solid #eee;
-            margin: 20px 0;
-        }
-
-        .content-block p {
-            margin: 8px 0;
-        }
-
-        .content-block strong {
-            color: #333;
-        }
-
-        .section-title {
-            font-size: 1.3em;
-            font-weight: bold;
-            color: #0275d8;
-            margin-top: 20px;
-            margin-bottom: 10px;
-            border-bottom: 2px solid #0275d8;
-            padding-bottom: 5px;
-        }
-
-        .footer {
-            text-align: center;
-            margin-top: 20px;
-            font-style: italic;
-            color: #777;
+            margin: 22px 0 4px;
         }
     </style>
 </head>
 
 <body>
-    <div class="container">
-        <div class="header-info">
-            <p><strong>From:</strong> Info CMATH</p>
-            <p><strong>Sent:</strong> Wednesday, May 28, 2025 3:09 PM</p>
-            <p><strong>To:</strong> {{mail}}</p>
-            <p><strong>Subject:</strong> [CMATH EDUCATION] ĐÁNH GIÁ KẾT QUẢ HỌC TẬP</p>
-        </div>
+    <div class="wrap">
+        <!-- Header: logo + thông tin công ty -->
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr>
+                <td width="40%" style="vertical-align: middle;">
+                    <img src="cid:cmath-logo" alt="CMATH EDUCATION" width="270"
+                        style="display: block; width: 270px; max-width: 100%; height: auto; border: 0;">
+                </td>
+                <td width="60%" style="vertical-align: middle; text-align: center; padding-left: 12px;">
+                    <div style="font-weight: bold; font-size: 17px; margin-bottom: 8px;">CÔNG TY TNHH GO MATH VIỆT NAM</div>
+                    <div style="margin-bottom: 6px;">Trung tâm Toán học Muôn Màu – GO MATH Việt Nam</div>
+                    <div>Sử dụng thương hiệu/nhận diện CMATH EDUCATION theo thỏa thuận</div>
+                </td>
+            </tr>
+        </table>
 
-        <div class="main-title">
-            <h1>🏆Cmath Education - Câu lạc bộ toán học muôn màu 🏆</h1>
-        </div>
-        <div class="sub-title">
+        <div style="text-align: center; color: #ff0000; font-weight: bold; font-size: 17px; margin: 20px 0 16px;">
             ĐÁNH GIÁ KẾT QUẢ HỌC TẬP
         </div>
-        <hr>
 
-        <div class="content-block">
-            <p>CMATH EDUCATION gửi quý PHHS đánh giá kết quả học tập cho HS:</p>
-            <br>
-            <p><strong>Họ và tên:</strong> {{name}}</p>
-            <p><strong>Ngày học:</strong> {{day}}</p>
-            <p><strong>Lớp học:</strong> {{class}}</p>
-            <p><strong>Nội dung bài học:</strong> {{content}}</p>
-            <p><strong>Nhận xét học sinh:</strong> {{comment}}</p>
-        </div>
+        <p style="margin: 0 0 12px;">Kính gửi Quý Phụ huynh học sinh,</p>
+        <p style="margin: 0 0 8px;">Trung tâm xin gửi tới Quý Phụ huynh tình hình học tập của con sau buổi học:</p>
 
-        <div class="section-title">I. Đánh giá kết quả học tập</div>
-        <div class="content-block">
-            <p><strong>Nội dung buổi học trước:</strong> {{previousContent}}</p>
-            <p><strong>Tổng số BTVN:</strong> {{totalTaskLength}}</p>
-            <p><strong>Tổng số BTVN đã làm:</strong> {{doneTask}}</p>
-            <p><strong>Tổng số BTVN làm đúng:</strong> {{totalScore}}</p>
-            <p><strong>Các bài làm sai:</strong> {{inCorrectTasks}}</p>
-            <p><strong>Các bài chưa làm được:</strong> {{missingTasks}}</p>
-            <p><strong>Trình bày:</strong> {{presentation}}</p>
-            <p><strong>Kỹ năng:</strong> {{skills}}</p>
-        </div>
+        <table role="presentation" class="info" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr>
+                <td class="dot">•</td>
+                <td class="label">Họ và tên:</td>
+                <td>{{name}}</td>
+            </tr>
+            <tr>
+                <td class="dot">•</td>
+                <td class="label">Ngày học:</td>
+                <td>{{day}}</td>
+            </tr>
+            <tr>
+                <td class="dot">•</td>
+                <td class="label">Lớp học:</td>
+                <td><strong>{{class}}</strong></td>
+            </tr>
+            <tr>
+                <td class="dot">•</td>
+                <td class="label">Nội dung bài học:</td>
+                <td><strong>{{content}}</strong></td>
+            </tr>
+            <tr>
+                <td class="dot">•</td>
+                <td class="label">Nhận xét học sinh:</td>
+                <td style="white-space: pre-line;">{{comment}}</td>
+            </tr>
+        </table>
 
-        <div class="footer">
-            <p>CLB xin trân trọng cảm ơn.</p>
-        </div>
+        <div class="section">I. Đánh giá kết quả học tập</div>
+        <table role="presentation" class="info" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr>
+                <td class="dot">•</td>
+                <td class="label">Nội dung buổi học trước:</td>
+                <td><strong>{{previousContent}}</strong></td>
+            </tr>
+            <tr>
+                <td class="dot">•</td>
+                <td class="label">Tổng số BTVN:</td>
+                <td>{{totalTaskLength}} ý</td>
+            </tr>
+            <tr>
+                <td class="dot">•</td>
+                <td class="label">Tổng số BTVN đã làm:</td>
+                <td>{{doneTask}}</td>
+            </tr>
+            <tr>
+                <td class="dot">•</td>
+                <td class="label">Tổng số BTVN làm đúng:</td>
+                <td>{{totalScore}}</td>
+            </tr>
+            <tr>
+                <td class="dot">•</td>
+                <td class="label">Bài làm còn thiếu:</td>
+                <td>{{missingTasks}}</td>
+            </tr>
+            <tr>
+                <td class="dot">•</td>
+                <td class="label">Bài tập làm sai:</td>
+                <td>{{inCorrectTasks}}</td>
+            </tr>
+            <tr>
+                <td class="dot">•</td>
+                <td class="label">Trình bày:</td>
+                <td>{{presentation}}</td>
+            </tr>
+            <tr>
+                <td class="dot">•</td>
+                <td class="label">Kỹ năng:</td>
+                <td>{{skills}}</td>
+            </tr>
+        </table>
+
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top: 14px;">
+            <tr>
+                <td style="padding: 2px 16px 2px 0;">- Trong lớp HS làm đúng nhiều BTVN nhất:</td>
+                <td style="padding: 2px 0;">{{classMaxScore}} ý</td>
+            </tr>
+            <tr>
+                <td style="padding: 2px 16px 2px 0;">- Trong lớp HS làm đúng ít BTVN nhất:</td>
+                <td style="padding: 2px 0;">{{classMinScore}} ý</td>
+            </tr>
+        </table>
+
+        <div class="section">II. Nhắc nhở buổi học tuần sau</div>
+        <table role="presentation" class="info" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr>
+                <td class="dot">•</td>
+                <td class="label">Tổng số BTVN:</td>
+                <td><strong>Phần BTVN</strong></td>
+            </tr>
+            <tr>
+                <td class="dot">•</td>
+                <td class="label">Nội dung BTVN:</td>
+                <td><strong>{{content}}</strong></td>
+            </tr>
+        </table>
+
+        <p style="margin: 22px 0 0;">
+            <span style="color: #ff0000; font-weight: bold;">Lưu ý</span>: Nếu bạn nào 2 buổi liên tục không làm BTVN,
+            trung tâm sẽ không cho con theo học nữa. Trung tâm xin trân trọng cảm ơn.
+        </p>
     </div>
 </body>
 

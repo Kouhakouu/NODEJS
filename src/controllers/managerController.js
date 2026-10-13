@@ -1235,23 +1235,6 @@ const updateStudentAttendance = async (req, res) => {
     }
 };
 
-// Buổi học liền trước (cùng lớp) của một buổi học
-const findPreviousLesson = (classId, currentLesson, options = {}) => db.Lesson.findOne({
-    include: [{
-        model: db.Class,
-        where: { id: classId },
-        attributes: [],
-        through: { attributes: [] }
-    }],
-    where: {
-        lessonDate: {
-            [db.Sequelize.Op.lt]: currentLesson.lessonDate
-        }
-    },
-    order: [['lessonDate', 'DESC']],
-    ...options
-});
-
 //Lấy thông tin buổi học
 const getLessonDetail = async (req, res) => {
     try {
@@ -1267,14 +1250,6 @@ const getLessonDetail = async (req, res) => {
             return res.status(404).json({ message: 'Lesson not found' });
         }
 
-        const previousLesson = await findPreviousLesson(classId, currentLesson);
-
-        const prevData = previousLesson ? {
-            content: previousLesson.lessonContent,
-        } : {
-            content: 'Không có',
-        };
-
         return res.status(200).json({
             id: currentLesson.id,
             className: classInfo ? classInfo.className : `Lớp ${classId}`,
@@ -1289,9 +1264,8 @@ const getLessonDetail = async (req, res) => {
 
             isLocked: Boolean(currentLesson.isLocked),
 
-            // Nội dung buổi trước vẫn lấy từ buổi trước
-            previousLessonContent: prevData.content,
-            hasPreviousLesson: Boolean(previousLesson),
+            // Nội dung buổi trước: người dùng tự điền cho từng buổi
+            previousLessonContent: currentLesson.previousLessonContent || '',
 
             // Đổi dòng này: Tổng số BTVN lấy theo bài hiện tại (hiện tại đang hotfix, tên biến bị sai nghĩa để frontend ko chỉnh nhiều)
             previousHomeworkCount: Number(currentLesson.totalTaskLength ?? 0)
@@ -1340,6 +1314,7 @@ const updateLessonDetail = async (req, res) => {
             return res.status(404).json({ message: 'Không tìm thấy buổi học trong lớp này' });
         }
 
+        if (previousLessonContent !== undefined) lesson.previousLessonContent = previousLessonContent.trim() || null;
         if (lessonContent !== undefined) lesson.lessonContent = lessonContent.trim();
         if (nextHomework !== undefined) lesson.nextHomework = nextHomework.trim();
 
@@ -1358,16 +1333,6 @@ const updateLessonDetail = async (req, res) => {
             }
         }
         await lesson.save({ transaction: t });
-
-        if (previousLessonContent !== undefined) {
-            const previousLesson = await findPreviousLesson(classId, lesson, { transaction: t });
-            if (!previousLesson) {
-                await t.rollback();
-                return res.status(400).json({ message: 'Lớp chưa có buổi học trước để chỉnh sửa nội dung.' });
-            }
-            previousLesson.lessonContent = previousLessonContent.trim();
-            await previousLesson.save({ transaction: t });
-        }
 
         await t.commit();
         return res.status(200).json({
@@ -1431,23 +1396,11 @@ const sendLessonResultsEmails = async (req, res) => {
             });
         }
 
-        const [lessonStudentRows, previousLesson, [perfRows]] = await Promise.all([
+        const [lessonStudentRows, [perfRows]] = await Promise.all([
+            // Chỉ gửi cho học sinh có mặt, học sinh vắng không nhận mail
             db.LessonStudent.findAll({
-                where: { lessonId },
+                where: { lessonId, attendance: true },
                 order: [["studentId", "ASC"]],
-            }),
-
-            db.Lesson.findOne({
-                include: [{
-                    model: db.Class,
-                    where: { id: classId },
-                    attributes: [],
-                    through: { attributes: [] }
-                }],
-                where: {
-                    lessonDate: { [db.Sequelize.Op.lt]: lesson.lessonDate }
-                },
-                order: [["lessonDate", "DESC"]],
             }),
 
             db.sequelize.query(
@@ -1495,7 +1448,7 @@ const sendLessonResultsEmails = async (req, res) => {
         // Chỉ lấy 1 batch nhỏ trong request này
         const batchStudents = orderedStudents.slice(offset, offset + limit);
 
-        const previousLessonContent = previousLesson?.lessonContent || "Không có buổi học trước";
+        const previousLessonContent = lesson.previousLessonContent || "Không có";
 
         const perfByStudentId = new Map();
         for (const row of perfRows) {
@@ -1503,6 +1456,18 @@ const sendLessonResultsEmails = async (req, res) => {
                 perfByStudentId.set(row.studentId, row);
             }
         }
+
+        // Số ý làm đúng nhiều nhất / ít nhất trong lớp ở buổi này (chỉ tính học sinh có mặt)
+        const presentIds = new Set(lessonStudentIds);
+        const classScores = [...perfByStudentId.values()]
+            .filter(p => presentIds.has(p.studentId) && p.totalScore !== null)
+            .map(p => Number(p.totalScore))
+            .filter(Number.isFinite);
+        const classMaxScore = classScores.length ? Math.max(...classScores) : "-";
+        const classMinScore = classScores.length ? Math.min(...classScores) : "-";
+
+        const totalTaskLength = lesson.totalTaskLength ?? 0;
+        const withYPrefix = (text) => (text === "-" ? text : `ý ${text}`);
 
         const subject = "[CMATH EDUCATION] ĐÁNH GIÁ KẾT QUẢ HỌC TẬP";
 
@@ -1532,13 +1497,15 @@ const sendLessonResultsEmails = async (req, res) => {
                     comment: safeStr(perf?.comment, "-"),
 
                     previousContent: safeStr(previousLessonContent, "-"),
-                    totalTaskLength: safeStr(lesson.totalTaskLength ?? 0, "0"),
-                    doneTask: safeStr(perf?.doneTask, "N/A"),
-                    totalScore: safeStr(perf?.totalScore, "N/A"),
-                    inCorrectTasks: jsonToText(perf?.incorrectTasks),
-                    missingTasks: jsonToText(perf?.missingTasks),
+                    totalTaskLength: safeStr(totalTaskLength, "0"),
+                    doneTask: perf ? `${perf.doneTask}/${totalTaskLength}` : "N/A",
+                    totalScore: perf ? `${perf.totalScore}/${perf.doneTask} ý` : "N/A",
+                    inCorrectTasks: withYPrefix(jsonToText(perf?.incorrectTasks)),
+                    missingTasks: withYPrefix(jsonToText(perf?.missingTasks)),
                     presentation: safeStr(perf?.presentation, "-"),
                     skills: safeStr(perf?.skills, "-"),
+                    classMaxScore,
+                    classMinScore,
                 },
             });
         }

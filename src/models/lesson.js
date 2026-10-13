@@ -50,6 +50,11 @@ module.exports = (sequelize, DataTypes) => {
             type: DataTypes.TEXT,
             allowNull: true
         },
+        // "Nội dung buổi trước": người dùng tự điền cho từng buổi, không lấy từ buổi liền trước
+        previousLessonContent: {
+            type: DataTypes.TEXT,
+            allowNull: true
+        },
         isLocked: {
             type: DataTypes.BOOLEAN,
             defaultValue: false // Mặc định là không khóa

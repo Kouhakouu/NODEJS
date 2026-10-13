@@ -108,7 +108,14 @@ async function composeRaw(mail) {
     return { raw: await node.build(), envelope: node.getEnvelope() };
 }
 
-async function sendTemplatedEmail({ to, subject, templateName, data }) {
+// Logo nhúng trực tiếp vào mail (cid), vì Gmail/Outlook chặn ảnh data URI
+const LESSON_RESULT_ATTACHMENTS = [{
+    filename: "cmath-logo.png",
+    path: path.join(__dirname, "..", "views", "images", "cmath-logo.png"),
+    cid: "cmath-logo",
+}];
+
+async function sendTemplatedEmail({ to, subject, templateName, data, attachments }) {
     const transporter = createTransporter();
     const template = getTemplate(templateName);
     const html = template(data);
@@ -118,6 +125,7 @@ async function sendTemplatedEmail({ to, subject, templateName, data }) {
         to,
         subject,
         html,
+        attachments,
     });
 
     const info = await transporter.sendMail({ envelope, raw });
@@ -134,6 +142,7 @@ async function sendLessonResultEmail({ to, subject, data }) {
         subject,
         templateName: "lesson-result",
         data,
+        attachments: LESSON_RESULT_ATTACHMENTS,
     });
 }
 
@@ -141,7 +150,7 @@ async function sendLessonResultEmail({ to, subject, data }) {
 // thay vì mở 1 kết nối mới cho từng email như sendTemplatedEmail.
 // items: [{ to, subject, data, meta }] -> trả về kết quả allSettled theo đúng thứ tự items.
 // Khi bật IMAP_SAVE_SENT, mỗi kết quả thành công có thêm value.savedToSent (true/false).
-async function sendBatchTemplatedEmails({ items, templateName }) {
+async function sendBatchTemplatedEmails({ items, templateName, attachments }) {
     if (!items || items.length === 0) return [];
 
     const template = getTemplate(templateName);
@@ -159,6 +168,7 @@ async function sendBatchTemplatedEmails({ items, templateName }) {
                     to: item.to,
                     subject: item.subject,
                     html: template(item.data),
+                    attachments,
                 });
                 raws[i] = raw;
                 return transporter.sendMail({ envelope, raw });
@@ -183,7 +193,11 @@ async function sendBatchTemplatedEmails({ items, templateName }) {
 }
 
 async function sendLessonResultEmailsBatch(items) {
-    return sendBatchTemplatedEmails({ items, templateName: "lesson-result" });
+    return sendBatchTemplatedEmails({
+        items,
+        templateName: "lesson-result",
+        attachments: LESSON_RESULT_ATTACHMENTS,
+    });
 }
 
 async function sendQuizSubmissionEmail({ to, subject, data }) {
