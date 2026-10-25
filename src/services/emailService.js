@@ -148,7 +148,8 @@ async function sendLessonResultEmail({ to, subject, data }) {
 
 // Gửi nhiều email cùng template trên 1 transporter pool (tối đa 3 kết nối SMTP),
 // thay vì mở 1 kết nối mới cho từng email như sendTemplatedEmail.
-// items: [{ to, subject, data, meta }] -> trả về kết quả allSettled theo đúng thứ tự items.
+// items: [{ to, subject, data, meta, attachments? }] -> trả về kết quả allSettled theo đúng thứ tự items.
+// item.attachments (nếu có) được gửi thêm sau các attachments dùng chung.
 // Khi bật IMAP_SAVE_SENT, mỗi kết quả thành công có thêm value.savedToSent (true/false).
 async function sendBatchTemplatedEmails({ items, templateName, attachments }) {
     if (!items || items.length === 0) return [];
@@ -168,7 +169,7 @@ async function sendBatchTemplatedEmails({ items, templateName, attachments }) {
                     to: item.to,
                     subject: item.subject,
                     html: template(item.data),
-                    attachments,
+                    attachments: [...(attachments || []), ...(item.attachments || [])],
                 });
                 raws[i] = raw;
                 return transporter.sendMail({ envelope, raw });

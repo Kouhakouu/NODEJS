@@ -7,6 +7,7 @@ const aiService = {
     generateComment: (...args) => require('../services/aiService').generateComment(...args)
 };
 const sendAssistantCodeEmail = (...args) => require('../services/emailService').sendAssistantCodeEmail(...args);
+import { uploadGradedPdf, destroyGradedFile, fixVietnameseFileName } from '../services/gradedFileService';
 
 const isValidEmail = (s) => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 
@@ -462,6 +463,10 @@ const getLessonStudentsPerformance = async (req, res) => {
                     parentEmail: student.parentEmail
                 }),
                 attendance: ls ? ls.attendance : false,
+                gradedFile: ls && ls.gradedFileUrl ? {
+                    url: ls.gradedFileUrl,
+                    name: ls.gradedFileName
+                } : null,
                 performance: perf ? {
                     doneTask: perf.doneTask,
                     totalScore: perf.totalScore,
@@ -558,6 +563,88 @@ const postSaveStudentPerformance = async (req, res) => {
         await t.rollback();
         console.error(error);
         return res.status(500).json({ message: error.message || 'Lỗi khi lưu kết quả học tập.' });
+    }
+};
+
+// Tìm bản ghi học sinh trong buổi học (đúng lớp) để gắn file bài đã chấm.
+// Trả về { error: { status, message } } nếu không hợp lệ.
+const findGradableLessonStudent = async (params) => {
+    const classId = parseInt(params.classId, 10);
+    const lessonId = parseInt(params.lessonId, 10);
+    const studentId = parseInt(params.studentId, 10);
+    if (!Number.isInteger(classId) || !Number.isInteger(lessonId) || !Number.isInteger(studentId)) {
+        return { error: { status: 400, message: 'classId, lessonId và studentId không hợp lệ.' } };
+    }
+
+    const [link, lesson, lessonStudent] = await Promise.all([
+        db.LessonClass.findOne({ where: { lessonId, classId } }),
+        db.Lesson.findByPk(lessonId, { attributes: ['id', 'isLocked'] }),
+        db.LessonStudent.findOne({ where: { lessonId, studentId } })
+    ]);
+
+    if (!link || !lesson) {
+        return { error: { status: 404, message: 'Không tìm thấy buổi học trong lớp này.' } };
+    }
+    if (lesson.isLocked) {
+        return { error: { status: 403, message: 'Buổi học đã bị chốt kết quả, không thể thay đổi file bài chấm!' } };
+    }
+    if (!lessonStudent) {
+        return { error: { status: 404, message: 'Học sinh không có trong danh sách buổi học.' } };
+    }
+    return { lessonId, studentId, lessonStudent };
+};
+
+// Trợ giảng upload file PDF bài tập đã chấm của 1 học sinh (thay file cũ nếu có)
+const uploadGradedFile = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ message: 'Vui lòng chọn file PDF bài đã chấm.' });
+        }
+
+        const { error, lessonId, studentId, lessonStudent } = await findGradableLessonStudent(req.params);
+        if (error) return res.status(error.status).json({ message: error.message });
+
+        const result = await uploadGradedPdf(req.file.buffer, { lessonId, studentId });
+        const oldPublicId = lessonStudent.gradedFilePublicId;
+
+        await lessonStudent.update({
+            gradedFileUrl: result.secure_url,
+            gradedFilePublicId: result.public_id,
+            gradedFileName: fixVietnameseFileName(req.file.originalname)
+        });
+
+        // Lưu DB xong mới xoá file cũ, tránh mất file khi lưu DB lỗi
+        if (oldPublicId && oldPublicId !== result.public_id) {
+            await destroyGradedFile(oldPublicId);
+        }
+
+        return res.status(200).json({
+            message: 'Đã upload file bài chấm.',
+            gradedFile: { url: lessonStudent.gradedFileUrl, name: lessonStudent.gradedFileName }
+        });
+    } catch (error) {
+        console.error('uploadGradedFile error:', error);
+        return res.status(500).json({ message: error.message || 'Lỗi khi upload file bài chấm.' });
+    }
+};
+
+const deleteGradedFile = async (req, res) => {
+    try {
+        const { error, lessonStudent } = await findGradableLessonStudent(req.params);
+        if (error) return res.status(error.status).json({ message: error.message });
+
+        const oldPublicId = lessonStudent.gradedFilePublicId;
+        await lessonStudent.update({
+            gradedFileUrl: null,
+            gradedFilePublicId: null,
+            gradedFileName: null
+        });
+        await destroyGradedFile(oldPublicId);
+
+        return res.status(200).json({ message: 'Đã xoá file bài chấm.' });
+    } catch (error) {
+        console.error('deleteGradedFile error:', error);
+        return res.status(500).json({ message: error.message || 'Lỗi khi xoá file bài chấm.' });
     }
 };
 
@@ -925,6 +1012,8 @@ module.exports = {
     getAssistantLessons: getAssistantLessons,
     getLessonStudentsPerformance: getLessonStudentsPerformance,
     postSaveStudentPerformance: postSaveStudentPerformance,
+    uploadGradedFile: uploadGradedFile,
+    deleteGradedFile: deleteGradedFile,
     getLessonHomeworkList: getLessonHomeworkList,
     updateLessonHomeworkList: updateLessonHomeworkList,
     updateLessonContent: updateLessonContent,

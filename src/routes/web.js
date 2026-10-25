@@ -11,6 +11,7 @@ import profileController from "../controllers/profileController";
 import adminController from "../controllers/adminController";
 import documentController from "../controllers/documentController";
 import { authMiddleware, requireRole } from "../services/authMiddleware";
+import { uploadGradedFileMiddleware } from "../services/gradedFileService";
 
 let router = express.Router();
 
@@ -93,6 +94,15 @@ let initWebRoutes = (app) => {
     router.post(
         '/assistant/classes/:classId/lessons/:lessonId/students-performance',
         assistantOnly, assistantController.postSaveStudentPerformance
+    );
+    // File PDF bài tập đã chấm của từng học sinh (lưu Cloudinary, gửi kèm mail kết quả)
+    router.post(
+        '/assistant/classes/:classId/lessons/:lessonId/students/:studentId/graded-file',
+        assistantOnly, uploadGradedFileMiddleware, assistantController.uploadGradedFile
+    );
+    router.delete(
+        '/assistant/classes/:classId/lessons/:lessonId/students/:studentId/graded-file',
+        assistantOnly, assistantController.deleteGradedFile
     );
     router.get('/lessons/:lessonId/homeworklist', assistantOrManager, assistantController.getLessonHomeworkList);
     router.post('/lessons/:lessonId/homeworklist', assistantOrManager, assistantController.updateLessonHomeworkList);

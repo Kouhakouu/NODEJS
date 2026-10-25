@@ -3,6 +3,7 @@ const path = require('path');
 const http = require('http');
 const https = require('https');
 const db = require('../models');
+const { fixVietnameseFileName } = require('../utils/fileName');
 
 // Lazy-load: chỉ nạp SDK Cloudinary khi thực sự upload/xoá file
 const cloudinary = {
@@ -21,21 +22,6 @@ const upload = multer({
         fileSize: 10 * 1024 * 1024, // giới hạn 10MB / file
     },
 });
-
-// Sửa lỗi tên file tiếng Việt bị mã hóa sai kiểu:
-// "GÃ³c" -> "Góc"
-// "ÄÃ¡p Ã¡n" -> "đáp án"
-const fixVietnameseFileName = (fileName = '') => {
-    try {
-        if (/[ÃÂÄÅÆÐÑ]/.test(fileName)) {
-            return Buffer.from(fileName, 'latin1').toString('utf8');
-        }
-
-        return fileName;
-    } catch {
-        return fileName;
-    }
-};
 
 // Xác định resource_type cho Cloudinary
 const getCloudinaryResourceType = (mimeType = '') => {

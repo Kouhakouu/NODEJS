@@ -293,6 +293,13 @@ const deleteLesson = async (req, res) => {
         });
         const performanceIds = performanceLinks.map(p => p.studentPerformanceId);
 
+        // File bài chấm trên Cloudinary không tự xóa theo CASCADE, lấy public_id trước khi xóa
+        const gradedFileRows = await db.LessonStudent.findAll({
+            where: { lessonId, gradedFilePublicId: { [db.Sequelize.Op.ne]: null } },
+            attributes: ['gradedFilePublicId'],
+            transaction: t
+        });
+
         await lesson.destroy({ transaction: t });
 
         if (performanceIds.length > 0) {
@@ -300,6 +307,11 @@ const deleteLesson = async (req, res) => {
         }
 
         await t.commit();
+
+        if (gradedFileRows.length > 0) {
+            const { destroyGradedFile } = require('../services/gradedFileService');
+            await Promise.all(gradedFileRows.map(r => destroyGradedFile(r.gradedFilePublicId)));
+        }
         return res.status(200).json({ message: 'Đã xóa buổi học' });
     } catch (error) {
         await t.rollback();
@@ -1428,6 +1440,9 @@ const sendLessonResultsEmails = async (req, res) => {
         ]);
 
         const lessonStudentIds = lessonStudentRows.map(r => r.studentId);
+        const gradedFileUrlByStudentId = new Map(
+            lessonStudentRows.filter(r => r.gradedFileUrl).map(r => [r.studentId, r.gradedFileUrl])
+        );
 
         const allStudents = lessonStudentIds.length > 0
             ? await db.Student.findAll({
@@ -1472,6 +1487,7 @@ const sendLessonResultsEmails = async (req, res) => {
         const subject = "[CMATH EDUCATION] ĐÁNH GIÁ KẾT QUẢ HỌC TẬP";
 
         let skippedNoEmail = 0;
+        let withGradedFile = 0;
         const mailItems = [];
 
         for (const s of batchStudents) {
@@ -1484,11 +1500,24 @@ const sendLessonResultsEmails = async (req, res) => {
 
             const perf = perfByStudentId.get(s.id) || null;
 
+            // File PDF bài đã chấm (trợ giảng upload lên Cloudinary): nodemailer tự tải từ link khi gửi
+            const gradedFileUrl = gradedFileUrlByStudentId.get(s.id);
+            const attachments = gradedFileUrl
+                ? [{
+                    filename: `Bài chấm - ${safeStr(s.fullName, `HS ${s.id}`)} - ${formatDateVN(lesson.lessonDate).replace(/\//g, "-")}.pdf`,
+                    href: gradedFileUrl,
+                    contentType: "application/pdf",
+                }]
+                : [];
+            if (gradedFileUrl) withGradedFile++;
+
             mailItems.push({
                 to,
                 subject,
                 meta: { studentId: s.id, email: to },
+                attachments,
                 data: {
+                    hasGradedFile: Boolean(gradedFileUrl),
                     mail: to,
                     name: safeStr(s.fullName, "-"),
                     day: formatDateVN(lesson.lessonDate),
@@ -1548,6 +1577,7 @@ const sendLessonResultsEmails = async (req, res) => {
                 failed,
                 skippedNoEmail,
                 notSavedToSent,
+                withGradedFile,
             },
             errors,
         });

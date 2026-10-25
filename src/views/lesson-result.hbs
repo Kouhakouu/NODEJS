@@ -138,6 +138,13 @@
                 <td class="label">Kỹ năng:</td>
                 <td>{{skills}}</td>
             </tr>
+            {{#if hasGradedFile}}
+            <tr>
+                <td class="dot">•</td>
+                <td class="label">Bài làm đã chấm:</td>
+                <td>Đính kèm file PDF trong email này</td>
+            </tr>
+            {{/if}}
         </table>
 
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top: 14px;">

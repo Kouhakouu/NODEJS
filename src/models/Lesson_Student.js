@@ -29,6 +29,20 @@ module.exports = (sequelize, DataTypes) => {
             type: DataTypes.BOOLEAN,
             allowNull: false,
             defaultValue: true
+        },
+        // File PDF bài tập đã chấm (trợ giảng upload lên Cloudinary), gửi kèm mail kết quả cho phụ huynh
+        gradedFileUrl: {
+            type: DataTypes.STRING,
+            allowNull: true
+        },
+        // public_id của Cloudinary - cần để xóa/thay file trên cloud
+        gradedFilePublicId: {
+            type: DataTypes.STRING,
+            allowNull: true
+        },
+        gradedFileName: {
+            type: DataTypes.STRING,
+            allowNull: true
         }
     }, {
         sequelize,
