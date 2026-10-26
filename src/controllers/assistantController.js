@@ -7,7 +7,13 @@ const aiService = {
     generateComment: (...args) => require('../services/aiService').generateComment(...args)
 };
 const sendAssistantCodeEmail = (...args) => require('../services/emailService').sendAssistantCodeEmail(...args);
-import { uploadGradedPdf, destroyGradedFile, fixVietnameseFileName } from '../services/gradedFileService';
+import {
+    uploadGradedPdf,
+    createGradedUploadSignature,
+    verifyDirectGradedUpload,
+    destroyGradedFile,
+    fixVietnameseFileName
+} from '../services/gradedFileService';
 
 const isValidEmail = (s) => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 
@@ -594,27 +600,57 @@ const findGradableLessonStudent = async (params) => {
     return { lessonId, studentId, lessonStudent };
 };
 
-// Trợ giảng upload file PDF bài tập đã chấm của 1 học sinh (thay file cũ nếu có)
+// Ký tham số để trình duyệt upload PDF thẳng lên Cloudinary (không đi qua Vercel, tránh giới hạn 4.5MB)
+const getGradedFileUploadSignature = async (req, res) => {
+    try {
+        const { error, lessonId, studentId } = await findGradableLessonStudent(req.params);
+        if (error) return res.status(error.status).json({ message: error.message });
+
+        return res.status(200).json(createGradedUploadSignature({ lessonId, studentId }));
+    } catch (error) {
+        console.error('getGradedFileUploadSignature error:', error);
+        return res.status(500).json({ message: error.message || 'Lỗi khi tạo chữ ký upload.' });
+    }
+};
+
+// Trợ giảng upload file PDF bài tập đã chấm của 1 học sinh (thay file cũ nếu có).
+// 2 cách: multipart `file` (file nhỏ, qua backend) hoặc JSON { publicId, version, signature, fileName }
+// sau khi trình duyệt đã upload thẳng lên Cloudinary bằng chữ ký từ getGradedFileUploadSignature.
 const uploadGradedFile = async (req, res) => {
     try {
-        if (!req.file) {
+        const direct = !req.file && req.body && req.body.publicId;
+        if (!req.file && !direct) {
             return res.status(400).json({ message: 'Vui lòng chọn file PDF bài đã chấm.' });
         }
 
         const { error, lessonId, studentId, lessonStudent } = await findGradableLessonStudent(req.params);
         if (error) return res.status(error.status).json({ message: error.message });
 
-        const result = await uploadGradedPdf(req.file.buffer, { lessonId, studentId });
+        let fileUrl, filePublicId, fileName;
+        if (direct) {
+            const { publicId, version, signature } = req.body;
+            fileUrl = verifyDirectGradedUpload({ publicId, version, signature, lessonId, studentId });
+            if (!fileUrl) {
+                return res.status(400).json({ message: 'Thông tin file upload không hợp lệ.' });
+            }
+            filePublicId = publicId;
+            fileName = String(req.body.fileName || 'bai-cham.pdf').slice(0, 255);
+        } else {
+            const result = await uploadGradedPdf(req.file.buffer, { lessonId, studentId });
+            fileUrl = result.secure_url;
+            filePublicId = result.public_id;
+            fileName = fixVietnameseFileName(req.file.originalname);
+        }
         const oldPublicId = lessonStudent.gradedFilePublicId;
 
         await lessonStudent.update({
-            gradedFileUrl: result.secure_url,
-            gradedFilePublicId: result.public_id,
-            gradedFileName: fixVietnameseFileName(req.file.originalname)
+            gradedFileUrl: fileUrl,
+            gradedFilePublicId: filePublicId,
+            gradedFileName: fileName
         });
 
         // Lưu DB xong mới xoá file cũ, tránh mất file khi lưu DB lỗi
-        if (oldPublicId && oldPublicId !== result.public_id) {
+        if (oldPublicId && oldPublicId !== filePublicId) {
             await destroyGradedFile(oldPublicId);
         }
 
@@ -1012,6 +1048,7 @@ module.exports = {
     getAssistantLessons: getAssistantLessons,
     getLessonStudentsPerformance: getLessonStudentsPerformance,
     postSaveStudentPerformance: postSaveStudentPerformance,
+    getGradedFileUploadSignature: getGradedFileUploadSignature,
     uploadGradedFile: uploadGradedFile,
     deleteGradedFile: deleteGradedFile,
     getLessonHomeworkList: getLessonHomeworkList,

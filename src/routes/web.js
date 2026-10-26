@@ -95,7 +95,12 @@ let initWebRoutes = (app) => {
         '/assistant/classes/:classId/lessons/:lessonId/students-performance',
         assistantOnly, assistantController.postSaveStudentPerformance
     );
-    // File PDF bài tập đã chấm của từng học sinh (lưu Cloudinary, gửi kèm mail kết quả)
+    // File PDF bài tập đã chấm của từng học sinh (lưu Cloudinary, gửi kèm mail kết quả).
+    // signature: ký để trình duyệt upload thẳng lên Cloudinary (file > 4.5MB không qua được Vercel)
+    router.post(
+        '/assistant/classes/:classId/lessons/:lessonId/students/:studentId/graded-file/signature',
+        assistantOnly, assistantController.getGradedFileUploadSignature
+    );
     router.post(
         '/assistant/classes/:classId/lessons/:lessonId/students/:studentId/graded-file',
         assistantOnly, uploadGradedFileMiddleware, assistantController.uploadGradedFile

@@ -54,6 +54,46 @@ const uploadGradedPdf = (fileBuffer, { lessonId, studentId }) => {
     });
 };
 
+// ===== Upload trực tiếp từ trình duyệt lên Cloudinary =====
+// Vercel serverless chặn request body > 4.5MB (trả 413 không kèm CORS -> FE báo "Failed to fetch"),
+// nên file PDF lớn không thể đi qua backend. Backend chỉ ký tham số upload, trình duyệt gửi file
+// thẳng lên Cloudinary rồi báo lại public_id + chữ ký response để backend xác thực và lưu DB.
+
+const buildGradedPublicIdStem = (lessonId, studentId) => `lesson_${lessonId}_student_${studentId}_`;
+
+const createGradedUploadSignature = ({ lessonId, studentId }) => {
+    const cloudinary = require('../config/cloudinary');
+    const { api_key, api_secret, cloud_name } = cloudinary.config();
+    const timestamp = Math.round(Date.now() / 1000);
+    const paramsToSign = {
+        folder: GRADED_FILE_FOLDER,
+        public_id: `${buildGradedPublicIdStem(lessonId, studentId)}${Date.now()}.pdf`,
+        timestamp,
+    };
+    const signature = cloudinary.utils.api_sign_request(paramsToSign, api_secret);
+    return {
+        uploadUrl: `https://api.cloudinary.com/v1_1/${cloud_name}/raw/upload`,
+        apiKey: api_key,
+        signature,
+        ...paramsToSign,
+        maxFileSize: MAX_GRADED_FILE_SIZE,
+    };
+};
+
+// Xác thực kết quả upload trực tiếp: chữ ký response của Cloudinary đúng (tức file thật sự do
+// Cloudinary nhận với public_id/version này) và public_id đúng là file của buổi học + học sinh này.
+// Trả về secure URL nếu hợp lệ, null nếu không.
+const verifyDirectGradedUpload = ({ publicId, version, signature, lessonId, studentId }) => {
+    if (!publicId || !version || !signature) return null;
+    const stem = buildGradedPublicIdStem(lessonId, studentId);
+    const expected = new RegExp(`(^|/)${stem}\\d+\\.pdf$`);
+    if (!expected.test(publicId)) return null;
+
+    const cloudinary = require('../config/cloudinary');
+    if (!cloudinary.utils.verify_api_response_signature(publicId, version, signature)) return null;
+    return cloudinary.url(publicId, { resource_type: 'raw', secure: true, version, urlAnalytics: false });
+};
+
 // Xoá file trên Cloudinary. Không throw: file mồ côi trên cloud không được làm hỏng thao tác chính.
 const destroyGradedFile = async (publicId) => {
     if (!publicId) return;
@@ -67,6 +107,8 @@ const destroyGradedFile = async (publicId) => {
 module.exports = {
     uploadGradedFileMiddleware,
     uploadGradedPdf,
+    createGradedUploadSignature,
+    verifyDirectGradedUpload,
     destroyGradedFile,
     fixVietnameseFileName,
 };
