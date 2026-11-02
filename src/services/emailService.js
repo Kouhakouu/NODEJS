@@ -5,6 +5,12 @@ const fs = require("fs");
 const path = require("path");
 const handlebars = require("handlebars");
 
+// Giữ xuống dòng của văn bản nhiều dòng (nhận xét nhập từ Excel...): Outlook bỏ qua
+// white-space: pre-line nên phải đổi \n thành <br>. Escape HTML trước khi chèn thẻ.
+handlebars.registerHelper("nl2br", (text) =>
+    new handlebars.SafeString(handlebars.escapeExpression(text).replace(/\r\n|\r|\n/g, "<br>"))
+);
+
 // cache theo templateName
 const templateCache = new Map();
 
