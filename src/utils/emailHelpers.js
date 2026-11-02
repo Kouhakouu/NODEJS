@@ -4,13 +4,30 @@ function safeStr(v, fallback = "-") {
     return s.trim().length ? s : fallback;
 }
 
+// Luôn format theo giờ VN: ngày buổi học lưu là 00:00 giờ VN (= 17:00 UTC hôm trước),
+// nên nếu dùng getDate() trên server chạy UTC sẽ bị lùi 1 ngày.
+const VN_DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+});
+
+function vnDateParts(d) {
+    return Object.fromEntries(VN_DATE_FORMAT.formatToParts(d).map(p => [p.type, p.value]));
+}
+
 function formatDateVN(dateLike) {
     const d = new Date(dateLike);
     if (Number.isNaN(d.getTime())) return safeStr(dateLike, "-");
-    const dd = String(d.getDate()).padStart(2, "0");
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const yyyy = d.getFullYear();
-    return `${dd}/${mm}/${yyyy}`;
+    const parts = vnDateParts(d);
+    return `${parts.day}/${parts.month}/${parts.year}`;
+}
+
+// Trả về [năm, tháng, ngày] (số) theo giờ VN
+function toVNYmd(dateLike) {
+    const { year, month, day } = vnDateParts(new Date(dateLike));
+    return [Number(year), Number(month), Number(day)];
 }
 
 function jsonToText(v) {
@@ -28,4 +45,4 @@ function jsonToText(v) {
     }
 }
 
-module.exports = { safeStr, formatDateVN, jsonToText };
+module.exports = { safeStr, formatDateVN, toVNYmd, jsonToText };

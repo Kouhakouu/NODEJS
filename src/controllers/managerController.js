@@ -1,6 +1,6 @@
 const bcrypt = require('bcrypt');
 const db = require('../models');
-const { safeStr, formatDateVN, jsonToText } = require("../utils/emailHelpers");
+const { safeStr, formatDateVN, toVNYmd, jsonToText } = require("../utils/emailHelpers");
 // Lazy-load để cold start không phải nạp nodemailer/handlebars khi request không gửi mail
 const sendLessonResultEmailsBatch = (...args) => require("../services/emailService").sendLessonResultEmailsBatch(...args);
 const sendQuizSubmissionEmail = (...args) => require("../services/emailService").sendQuizSubmissionEmail(...args);
@@ -1849,8 +1849,8 @@ const getManagerDashboardStats = async (req, res) => {
 
         // Tính ISO week và nhãn "dd/MM" (thứ Hai của tuần)
         const getWeekKey = (dateStr) => {
-            const s = typeof dateStr === 'string' ? dateStr : dateStr.toISOString();
-            const [y, m, d] = s.substring(0, 10).split('-').map(Number);
+            // Lấy ngày theo giờ VN, vì lessonDate 00:00 giờ VN là 17:00 UTC hôm trước
+            const [y, m, d] = toVNYmd(dateStr);
             const date = new Date(y, m - 1, d);
             const thu = new Date(date);
             thu.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
