@@ -1385,7 +1385,29 @@ const toggleLessonLock = async (req, res) => {
     }
 };
 
+// Diễn giải lỗi SMTP thường gặp sang tiếng Việt để quản lý biết vì sao mail không gửi được
+const describeMailError = (err) => {
+    const code = err?.code;
+    const responseCode = Number(err?.responseCode);
+    if (code === "EAUTH") return "Máy chủ mail từ chối đăng nhập (sai cấu hình SMTP)";
+    if (["ETIMEDOUT", "ECONNECTION", "ESOCKET", "EDNS", "ECONNRESET"].includes(code)) {
+        return "Không kết nối được tới máy chủ mail, hãy gửi lại sau";
+    }
+    if (responseCode === 550 || responseCode === 553 || responseCode === 501 || code === "EENVELOPE") {
+        return "Địa chỉ email bị từ chối hoặc không tồn tại, hãy kiểm tra lại email phụ huynh";
+    }
+    if (responseCode === 552) return "Mail quá lớn (file bài chấm đính kèm quá nặng)";
+    if (responseCode >= 400 && responseCode < 500) {
+        return "Máy chủ mail tạm thời từ chối (có thể do gửi quá nhanh), hãy gửi lại sau";
+    }
+    if (/status code|fetch|ENOTFOUND/i.test(err?.message || "")) {
+        return "Không tải được file bài chấm để đính kèm";
+    }
+    return "Lỗi không xác định khi gửi mail";
+};
+
 // POST /manager/classes/:classId/lessons/:lessonId/send-results-emails?offset=0&limit=5
+// Thêm &studentId=... để chỉ gửi riêng cho 1 học sinh (dùng khi gửi lại mail bị lỗi)
 const sendLessonResultsEmails = async (req, res) => {
     try {
         const classId = parseInt(req.params.classId, 10);
@@ -1393,6 +1415,7 @@ const sendLessonResultsEmails = async (req, res) => {
 
         const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
         const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 5, 1), 10);
+        const onlyStudentId = req.query.studentId ? parseInt(req.query.studentId, 10) : null;
 
         const [lesson, cls] = await Promise.all([
             db.Lesson.findByPk(lessonId),
@@ -1447,16 +1470,30 @@ const sendLessonResultsEmails = async (req, res) => {
         const allStudents = lessonStudentIds.length > 0
             ? await db.Student.findAll({
                 where: { id: { [db.Sequelize.Op.in]: lessonStudentIds } },
-                attributes: ["id", "fullName", "parentEmail"]
+                attributes: ["id", "fullName", "parentEmail", "parentPhoneNumber", "school"]
             })
             : [];
 
         const studentMap = new Map(allStudents.map(s => [s.id, s]));
 
         // Giữ thứ tự ổn định theo LessonStudent
-        const orderedStudents = lessonStudentIds
+        let orderedStudents = lessonStudentIds
             .map(id => studentMap.get(id))
             .filter(Boolean);
+
+        if (onlyStudentId) {
+            orderedStudents = orderedStudents.filter(s => s.id === onlyStudentId);
+            if (orderedStudents.length === 0) {
+                return res.status(400).json({
+                    message: "Học sinh này vắng hoặc không thuộc buổi học, không thể gửi email.",
+                });
+            }
+            if (!orderedStudents[0].parentEmail) {
+                return res.status(400).json({
+                    message: `Học sinh ${orderedStudents[0].fullName} chưa có email phụ huynh.`,
+                });
+            }
+        }
 
         const totalStudents = orderedStudents.length;
 
@@ -1489,12 +1526,23 @@ const sendLessonResultsEmails = async (req, res) => {
         let skippedNoEmail = 0;
         let withGradedFile = 0;
         const mailItems = [];
+        const skippedStudents = [];
+
+        // Thông tin học sinh kèm theo kết quả lỗi/bỏ qua để quản lý biết ai cần gửi lại
+        const studentInfo = (s) => ({
+            studentId: s.id,
+            fullName: s.fullName,
+            email: s.parentEmail || null,
+            parentPhoneNumber: s.parentPhoneNumber || null,
+            school: s.school || null,
+        });
 
         for (const s of batchStudents) {
             const to = s.parentEmail;
 
             if (!to) {
                 skippedNoEmail++;
+                skippedStudents.push(studentInfo(s));
                 continue;
             }
 
@@ -1514,7 +1562,7 @@ const sendLessonResultsEmails = async (req, res) => {
             mailItems.push({
                 to,
                 subject,
-                meta: { studentId: s.id, email: to },
+                meta: { ...studentInfo(s), hasGradedFile: Boolean(gradedFileUrl) },
                 attachments,
                 data: {
                     hasGradedFile: Boolean(gradedFileUrl),
@@ -1545,15 +1593,19 @@ const sendLessonResultsEmails = async (req, res) => {
         let failed = 0;
         let notSavedToSent = 0;
         const errors = [];
+        const sentStudentIds = [];
 
         sendResults.forEach((r, i) => {
             if (r.status === "fulfilled") {
                 sent++;
+                sentStudentIds.push(mailItems[i].meta.studentId);
                 if (r.value?.savedToSent === false) notSavedToSent++;
             } else {
                 failed++;
+                console.error(`sendLessonResultsEmails: lỗi gửi mail cho HS ${mailItems[i].meta.studentId}:`, r.reason);
                 errors.push({
                     ...mailItems[i].meta,
+                    reason: describeMailError(r.reason),
                     error: r.reason?.message || "unknown error"
                 });
             }
@@ -1580,6 +1632,8 @@ const sendLessonResultsEmails = async (req, res) => {
                 withGradedFile,
             },
             errors,
+            skippedStudents,
+            sentStudentIds,
         });
 
     } catch (error) {
